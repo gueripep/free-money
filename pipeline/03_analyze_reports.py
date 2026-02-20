@@ -9,27 +9,57 @@ from core.config import COMPANIES_DIR, DATA_DIR, setup_logging
 
 logger = setup_logging("03_analyze_reports")
 
-def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysis: dict, lite_mode: bool = False, custom_question: str = None):
+def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysis: dict, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None):
     """Generates the Analysis.md (Deep Dive) or Analysis_Lite.md file."""
-    filename = "Analysis_Lite.md" if lite_mode else "Analysis.md"
+    if quarterly_mode and quarterly_pdf_path:
+        basename = os.path.basename(quarterly_pdf_path)
+        filename = f"Analysis_{basename}.md"
+    else:
+        filename = "Analysis_Lite.md" if lite_mode else "Analysis.md"
+    
     md_path = os.path.join(company_dir, filename)
     
     with open(md_path, "w", encoding="utf-8") as f:
-        title = "Lite Search Analysis" if lite_mode else "Rocket Fuel Deep Dive"
+        if quarterly_mode:
+            title = "Quarterly Sell Signal Update"
+            source = basename
+        else:
+            title = "Lite Search Analysis" if lite_mode else "Rocket Fuel Deep Dive"
+            source = stock.get('annual_report_path', 'Metrics Only') if not lite_mode else 'Google Search & Metrics'
+            
         f.write(f"# {title}: {stock['name']} ({ticker})\n\n")
         f.write(f"**Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"**Source Document:** {stock.get('annual_report_path', 'Metrics Only') if not lite_mode else 'Google Search & Metrics'}\n")
-        f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
-        f.write(f"**10-Bagger Candidate:** {'YES' if analysis.get('is_10_bagger_candidate') else 'NO'}\n")
-        f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
+        f.write(f"**Source Document:** {source}\n")
+        
+        if quarterly_mode:
+            f.write(f"**Thesis Holds:** {'YES' if analysis.get('thesis_holds') else 'NO'}\n")
+            f.write(f"**Recommendation:** {analysis.get('recommendation', 'N/A')}\n\n")
+        else:
+            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
+            f.write(f"**10-Bagger Candidate:** {'YES' if analysis.get('is_10_bagger_candidate') else 'NO'}\n")
+            f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
         
         f.write("## Executive Summary\n")
         f.write(f"{analysis.get('verdict_summary', 'N/A')}\n\n")
         
+        f.write("## 1. Global Synthesis & Business Reality\n")
+        f.write(f"{analysis.get('global_thought', 'N/A')}\n\n")
+        
         details = analysis.get('analysis', {})
         
-        if lite_mode:
-            f.write("## 1. Business Summary\n")
+        if quarterly_mode:
+            f.write("## 2. Thesis Tracking\n")
+            f.write(f"{details.get('thesis_tracking', 'N/A')}\n\n")
+            f.write("## 3. Financial Update\n")
+            f.write(f"{details.get('financial_update', 'N/A')}\n\n")
+            f.write("## 4. Red Flags\n")
+            f.write(f"{details.get('red_flags', 'N/A')}\n\n")
+            f.write("## 5. Management Tone\n")
+            f.write(f"{details.get('management_tone', 'N/A')}\n\n")
+            f.write("## 6. Valuation Check\n")
+            f.write(f"{details.get('valuation_check', 'N/A')}\n\n")
+        elif lite_mode:
+            f.write("## 2. Business Summary\n")
             f.write(f"{details.get('business_summary', 'N/A')}\n\n")
             
             f.write("## 2. Metrics Evaluation\n")
@@ -44,33 +74,33 @@ def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysi
             f.write("## 5. Unknowns / Blank Spots\n")
             f.write(f"{details.get('unknowns', 'N/A')}\n\n")
         else:
-            f.write("## 1. The Forensic Launchpad (Financials)\n")
+            f.write("## 2. The Forensic Launchpad (Financials)\n")
             f.write(f"{details.get('forensic_launchpad', 'N/A')}\n\n")
             
-            f.write("## 2. The Story (Lynch)\n")
+            f.write("## 3. The Story (Lynch)\n")
             f.write(f"{details.get('the_story', 'N/A')}\n\n")
             
-            f.write("## 3. The Gate (Phelps)\n")
+            f.write("## 4. The Gate (Phelps)\n")
             f.write(f"{details.get('the_gate', 'N/A')}\n\n")
             
-            f.write("## 4. Rocket Fuel (O'Neil)\n")
+            f.write("## 5. Rocket Fuel (O'Neil)\n")
             f.write(f"{details.get('rocket_fuel', 'N/A')}\n\n")
             
-            f.write("## 5. Intelligent Fanatics (Cassel)\n")
+            f.write("## 6. Intelligent Fanatics (Cassel)\n")
             f.write(f"{details.get('intelligent_fanatics', 'N/A')}\n\n")
             
-            f.write("## 6. The Valuation Check\n")
+            f.write("## 7. The Valuation Check\n")
             f.write(f"{details.get('valuation', 'N/A')}\n\n")
             
-            f.write("## 7. Red Flags\n")
+            f.write("## 8. Red Flags\n")
             f.write(f"{details.get('red_flags', 'N/A')}\n\n")
             
-            f.write("## 8. Pre-Mortem (The Bear Case)\n")
+            f.write("## 9. Pre-Mortem (The Bear Case)\n")
             f.write(f"{details.get('pre_mortem', 'N/A')}\n\n")
             
     logger.info(f"Updated {filename} in {company_dir}")
 
-def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: str = None):
+def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None):
     """Processes a single stock for deep dive or lite analysis."""
     stock = db.get_stock(ticker)
     
@@ -83,10 +113,10 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
     
     pdf_path = None
     doc_age_months = None
-    if not lite_mode:
+    if not lite_mode and not quarterly_mode:
         # Look for PDF
         for file in os.listdir(company_dir):
-            if file.lower().endswith('.pdf'):
+            if file.lower().endswith('.pdf') and not file.startswith('Interim_'):
                 pdf_path = os.path.join(company_dir, file)
                 # Calculate document age
                 mtime = os.path.getmtime(pdf_path)
@@ -103,7 +133,10 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
         db.update_stock_metrics(stock['isin'], {'annual_report_path': pdf_path})
         stock['annual_report_path'] = pdf_path # Update local dict
     
-    mode_name = "LITE mode" if lite_mode else f"DEEP DIVE using {pdf_path}"
+    if quarterly_mode:
+        mode_name = f"QUARTERLY SELL SIGNAL using {quarterly_pdf_path}"
+    else:
+        mode_name = "LITE mode" if lite_mode else f"DEEP DIVE using {pdf_path}"
     logger.info(f"Running {mode_name} on {ticker}...")
     
     # Fetch Live Valuation Metrics
@@ -115,6 +148,17 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
         stock['price_to_book'] = info.get('priceToBook', 'N/A')
         stock['ev_to_ebitda'] = info.get('enterpriseToEbitda', 'N/A')
         stock['price_to_sales'] = info.get('priceToSalesTrailing12Months', 'N/A')
+        stock['enterprise_value'] = info.get('enterpriseValue', 'N/A')
+        stock['ebitda'] = info.get('ebitda', 'N/A')
+        
+        # Growth and Health Metrics
+        stock['revenue_growth'] = info.get('revenueGrowth', 'N/A')
+        stock['profit_margins'] = info.get('profitMargins', 'N/A')
+        stock['operating_margins'] = info.get('operatingMargins', 'N/A')
+        stock['return_on_equity'] = info.get('returnOnEquity', 'N/A')
+        stock['total_debt'] = info.get('totalDebt', 'N/A')
+        stock['debt_to_equity'] = info.get('debtToEquity', 'N/A')
+        stock['free_cashflow'] = info.get('freeCashflow', 'N/A')
     except Exception as e:
         logger.error(f"Failed to fetch live valuation for {ticker}: {e}")
     
@@ -134,12 +178,23 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
             except Exception as e:
                 logger.error(f"Failed to extract Lite Unknowns for {ticker}: {e}")
 
+    previous_thesis = None
+    if quarterly_mode:
+        md_path_deep = os.path.join(company_dir, "Analysis.md")
+        if os.path.exists(md_path_deep):
+            try:
+                with open(md_path_deep, "r", encoding="utf-8") as f:
+                    previous_thesis = f.read()
+            except Exception as e:
+                logger.error(f"Failed to read previous thesis for {ticker}: {e}")
+
     ai_client = GeminiClient()
-    analysis = ai_client.analyze_stock(stock, lite_mode, custom_question, doc_age_months)
+    analysis = ai_client.analyze_stock(stock, lite_mode, custom_question, doc_age_months, quarterly_mode, previous_thesis, quarterly_pdf_path)
     
     if analysis:
-        generate_markdown_report(company_dir, ticker, stock, analysis, lite_mode=lite_mode, custom_question=custom_question)
-        db.save_analysis(stock['isin'], analysis, lite_mode=lite_mode)
+        generate_markdown_report(company_dir, ticker, stock, analysis, lite_mode=lite_mode, custom_question=custom_question, quarterly_mode=quarterly_mode, quarterly_pdf_path=quarterly_pdf_path)
+        if not quarterly_mode:
+            db.save_analysis(stock['isin'], analysis, lite_mode=lite_mode)
         print(f"Success! Analysis complete for {ticker} ({mode_name}).")
     else:
         logger.error(f"Analysis failed for {ticker}")

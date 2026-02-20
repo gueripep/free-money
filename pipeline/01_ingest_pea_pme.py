@@ -9,36 +9,18 @@ from core.config import EXCEL_FILE, TICKERS_JSON, setup_logging
 
 logger = setup_logging("01_ingest_pea_pme")
 
-# Known Euronext PEA-PME list URLs
-EURONEXT_URLS = [
-    "https://live.euronext.com/sites/default/files/pea_pme/liste_des_valeurs_pea_pme.xlsx",
-    "https://connect.euronext.com/sites/default/files/pea_pme/liste_des_valeurs_pea_pme.xlsx",
-    "https://www.euronext.com/sites/default/files/pea_pme/liste_des_valeurs_pea_pme.xlsx"
-]
-
-MARKET_SUFFIXES = {
-    "FR": ".PA", "BE": ".BR", "NL": ".AS", "PT": ".LS", 
-    "IE": ".IR", "LU": ".LU"
-}
-
-def download_pea_pme_list() -> bool:
-    """Attempts to download the official PEA-PME Excel list from Euronext."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36"
-    }
-        
-    for url in EURONEXT_URLS:
-        try:
-            logger.info(f"Attempting download from: {url}")
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code == 200:
-                with open(EXCEL_FILE, "wb") as f:
-                    f.write(response.content)
-                logger.info(f"Successfully saved to {EXCEL_FILE}")
-                return True
-        except Exception as e:
-            logger.warning(f"Failed download from {url}: {e}")
+def check_excel_exists() -> bool:
+    """Checks if the user has manually downloaded the Excel file to data/"""
+    if os.path.exists(EXCEL_FILE):
+        return True
     
+    # Try to find any excel file in the directory if the specific name isn't there
+    data_dir = os.path.dirname(EXCEL_FILE)
+    if os.path.exists(data_dir):
+        for f in os.listdir(data_dir):
+            if f.endswith('.xlsx'):
+                logger.info(f"Found Excel file: {f}. Ensure it is named correctly in config or renamed.")
+                return True
     return False
 
 def resolve_isin_to_ticker(isin: str) -> Optional[str]:
@@ -99,9 +81,9 @@ def parse_stock_excel() -> List[Dict]:
 
 def run_ingestion():
     logger.info("Starting PEA-PME Ingestion Pipeline (Step 1)...")
-    
-    if not download_pea_pme_list():
-        logger.info("Using existing local file for ingestion.")
+    if not check_excel_exists():
+        logger.error("No Excel file found in data/. Please download it manually from Euronext.")
+        return
     
     stocks = parse_stock_excel()
     if not stocks:

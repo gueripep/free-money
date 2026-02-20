@@ -25,15 +25,22 @@ def render_markdown_analysis(ticker: str):
     md_path_lite = os.path.join(company_dir, "Analysis_Lite.md")
     md_path_deep = os.path.join(company_dir, "Analysis.md")
     
+    interim_mds = []
+    if os.path.exists(company_dir):
+        interim_mds = sorted([f for f in os.listdir(company_dir) if f.startswith("Analysis_Interim_") and f.endswith(".md")], reverse=True)
+    
     has_lite = os.path.exists(md_path_lite)
     has_deep = os.path.exists(md_path_deep)
     
-    if not has_lite and not has_deep:
+    if not has_lite and not has_deep and not interim_mds:
         st.warning(f"No analysis found for {ticker}.")
         return
 
     tabs_to_create = []
     if has_deep: tabs_to_create.append("🚀 Rocket Fuel (Deep Dive)")
+    for imd in interim_mds:
+        name = imd.replace("Analysis_Interim_", "").replace(".pdf.md", ".pdf").replace(".md", "")
+        tabs_to_create.append(f"📅 Sell Signal: {name}")
     if has_lite: tabs_to_create.append("🌐 Search & Metrics (Lite)")
     
     tabs = st.tabs(tabs_to_create)
@@ -47,6 +54,15 @@ def render_markdown_analysis(ticker: str):
                 st.markdown(content)
         tab_idx += 1
         
+    for imd in interim_mds:
+        with tabs[tab_idx]:
+            md_path = os.path.join(company_dir, imd)
+            with open(md_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                content = content.replace("$", r"\$")
+                st.markdown(content)
+        tab_idx += 1
+        
     if has_lite:
         with tabs[tab_idx]:
             with open(md_path_lite, "r", encoding="utf-8") as f:
@@ -55,10 +71,14 @@ def render_markdown_analysis(ticker: str):
                 st.markdown(content)
         tab_idx += 1
 
-def run_analysis(ticker: str, lite_mode: bool = False, custom_question: str = None):
-    mode_label = "Lite Search" if lite_mode else "Rocket Fuel PDF"
+def run_analysis(ticker: str, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None):
+    if quarterly_mode:
+        mode_label = f"Quarterly Sell Signal Update using {os.path.basename(quarterly_pdf_path)}"
+    else:
+        mode_label = "Lite Search" if lite_mode else "Rocket Fuel PDF"
+        
     with st.spinner(f"Running '{mode_label}' Deep Dive for {ticker}... (This takes about 60 seconds)"):
-        analyze_reports.process_target_stock(ticker, lite_mode=lite_mode, custom_question=custom_question)
+        analyze_reports.process_target_stock(ticker, lite_mode=lite_mode, custom_question=custom_question, quarterly_mode=quarterly_mode, quarterly_pdf_path=quarterly_pdf_path)
     st.success("Analysis Complete!")
     st.rerun()
 
@@ -116,16 +136,34 @@ elif view == "The Cockpit":
     except ValueError:
         default_index = 0
 
-    selected_ticker = st.selectbox(
-        "Select Candidate for Deep Dive:", 
-        tickers,
-        index=default_index,
-        format_func=format_ticker_option
-    )
+    col_prev, col_sel, col_next = st.columns([1, 4, 1])
+    
+    with col_prev:
+        st.markdown("<br>", unsafe_allow_html=True) # spacing alignment
+        if st.button("⬅️ Previous", use_container_width=True):
+            new_idx = (default_index - 1) % len(tickers)
+            st.session_state.selected_ticker = tickers[new_idx]
+            st.rerun()
+
+    with col_sel:
+        selected_ticker = st.selectbox(
+            "Select Candidate for Deep Dive:", 
+            tickers,
+            index=default_index,
+            format_func=format_ticker_option
+        )
+        
+    with col_next:
+        st.markdown("<br>", unsafe_allow_html=True) # spacing alignment
+        if st.button("Next ➡️", use_container_width=True):
+            new_idx = (default_index + 1) % len(tickers)
+            st.session_state.selected_ticker = tickers[new_idx]
+            st.rerun()
     
     # Update session state if user manually changes the dropdown
     if selected_ticker != st.session_state.selected_ticker:
         st.session_state.selected_ticker = selected_ticker
+        st.rerun()
     
     if selected_ticker:
         stock = db.get_stock(selected_ticker)
@@ -163,35 +201,37 @@ elif view == "The Cockpit":
             st.metric("Gross Margin", f"{stock.get('gross_margins', 0)*100:.1f}%" if stock.get('gross_margins') else "N/A")
             
             st.markdown(f"📈 **[View on Yahoo Finance](https://finance.yahoo.com/quote/{selected_ticker})**")
+            ir_query = quote_plus(f"{stock['name']} investor relations")
+            st.markdown(f"🏛️ **[Investor Relations Search](https://www.google.com/search?q={ir_query})**")
             
             # Check for PDF
             pdf_path = None
             for file in os.listdir(company_dir):
-                if file.lower().endswith('.pdf'):
+                if file.lower().endswith('.pdf') and not file.startswith('Interim_'):
                     pdf_path = os.path.join(company_dir, file)
                     break
             
-            st.markdown("### AI Analysis Actions")
-            custom_question = st.text_area("Optional: Custom Detective Question / Thesis Note", help="Ask the AI to investigate something specific (e.g., 'Why is EV/EBITDA only 3.3x?')", key=f"q_{selected_ticker}")
-            
             if st.button("🌐 Search & Analyze Metrics (Lite)", help="Runs a cheaper, faster analysis using basic metrics without needing a PDF."):
-                run_analysis(selected_ticker, lite_mode=True, custom_question=custom_question)
+                run_analysis(selected_ticker, lite_mode=True)
                 
             has_pdf = bool(pdf_path)
-            if st.button("🚀 Run 'Rocket Fuel' Deep Dive (PDF)", disabled=not has_pdf, help="Requires an uploaded Annual Report PDF. Fully analyzes the actual document."):
-                run_analysis(selected_ticker, lite_mode=False, custom_question=custom_question)
             
             st.markdown("---")
-            st.markdown("### Document Status")
+            st.markdown("### Document Status (Annual Report)")
             if has_pdf:
                 st.success(f"PDF Found: `{os.path.basename(pdf_path)}`")
+                if st.button("🗑️ Remove PDF", key=f"remove_pdf_{selected_ticker}"):
+                    try:
+                        os.remove(pdf_path)
+                        db.update_stock_metrics(stock['isin'], {'annual_report_path': None})
+                        st.toast("Annual Report PDF removed!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to remove PDF: {e}")
             else:
                 st.error("No Annual Report PDF found. Upload one to unlock the Rocket Fuel analysis.")
-                st.markdown("**Optional:**")
-                search_query = quote_plus(f"{stock['name']} {selected_ticker} Document d'enregistrement universel 2024 pdf")
-                st.markdown(f"1. [Search Google for Report](https://www.google.com/search?q={search_query})")
                 
-                uploaded_file = st.file_uploader("2. Upload PDF Report", type="pdf")
+                uploaded_file = st.file_uploader("Upload Annual Report PDF", type="pdf", key=f"annual_up_{selected_ticker}")
                 if uploaded_file is not None:
                     # Save the file
                     pdf_save_path = os.path.join(company_dir, uploaded_file.name)
@@ -200,8 +240,39 @@ elif view == "The Cockpit":
                     
                     # Update DB
                     db.update_stock_metrics(stock['isin'], {'annual_report_path': pdf_save_path})
-                    st.success("File uploaded successfully!")
+                    st.success("Annual Report uploaded successfully!")
                     st.rerun()
+
+            custom_question_annual = st.text_area("Optional: Custom Detective Question / Thesis Note", help="Ask the AI to investigate something specific in the Annual Report (e.g., 'Why is EV/EBITDA only 3.3x?')", key=f"q_{selected_ticker}")
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🚀 Run 'Rocket Fuel' Deep Dive (PDF)", disabled=not has_pdf, help="Requires an uploaded Annual Report PDF. Fully analyzes the actual document."):
+                run_analysis(selected_ticker, lite_mode=False, custom_question=custom_question_annual)
+
+            st.markdown("### Interim / Quarterly Reports")
+            interim_pdfs = sorted([f for f in os.listdir(company_dir) if f.lower().endswith('.pdf') and f.startswith('Interim_')], reverse=True)
+            
+            if interim_pdfs:
+                selected_interim = st.selectbox("Select Interim Report", interim_pdfs, key=f"interim_sel_{selected_ticker}")
+                interim_path = os.path.join(company_dir, selected_interim)
+                md_name = f"Analysis_{selected_interim}.md"
+                md_path = os.path.join(company_dir, md_name)
+                
+                if not os.path.exists(md_path):
+                    custom_question_interim = st.text_area("Optional: Specific things to check in this report?", key=f"q_int_{selected_ticker}")
+                    if st.button(f"📅 Run Sell Signal Analysis on {selected_interim}"):
+                        run_analysis(selected_ticker, quarterly_mode=True, quarterly_pdf_path=interim_path, custom_question=custom_question_interim)
+                else:
+                    st.success(f"Analysis already exists for `{selected_interim}`. View in tabs.")
+            else:
+                st.info("No interim reports found.")
+                
+            uploaded_interim = st.file_uploader("Upload Interim/Quarterly Report PDF", type="pdf", key=f"interim_up_{selected_ticker}")
+            if uploaded_interim is not None:
+                interim_save_path = os.path.join(company_dir, f"Interim_{uploaded_interim.name}")
+                with open(interim_save_path, "wb") as f:
+                    f.write(uploaded_interim.getbuffer())
+                st.success("Interim Report uploaded successfully!")
+                st.rerun()
 
         with col2:
             st.subheader("AI Investment Thesis")

@@ -19,6 +19,13 @@ def get_financial_metrics(ticker: str) -> Optional[Dict]:
             'revenue_growth': info.get('revenueGrowth'),
             'profit_margins': info.get('profitMargins'),
             'gross_margins': info.get('grossMargins'),
+            'operating_margins': info.get('operatingMargins'),
+            'return_on_equity': info.get('returnOnEquity'),
+            'total_debt': info.get('totalDebt'),
+            'debt_to_equity': info.get('debtToEquity'),
+            'free_cashflow': info.get('freeCashflow'),
+            'enterprise_value': info.get('enterpriseValue'),
+            'ebitda': info.get('ebitda'),
             'operating_cash_flow': info.get('operatingCashflow'),
             'float_shares': info.get('floatShares')
         }
@@ -67,7 +74,7 @@ def run_batch_update(limit: int = None):
     
     query1 = '''
         SELECT isin, ticker FROM stocks 
-        WHERE (float_shares IS NULL OR market_cap IS NULL) AND ticker IS NOT NULL
+        WHERE (float_shares IS NULL OR market_cap IS NULL OR enterprise_value IS NULL) AND ticker IS NOT NULL
     '''
     query2 = "SELECT isin, ticker FROM stocks WHERE ticker IS NULL"
     
