@@ -138,3 +138,13 @@ def update_manual_note(isin: str, note: str):
     cursor.execute("UPDATE stocks SET manual_note = ?, last_updated = CURRENT_TIMESTAMP WHERE isin = ?", (note, isin))
     conn.commit()
     conn.close()
+
+def get_good_companies() -> List[Dict]:
+    """Fetches all companies that have been manually marked as '🟢 Good'."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM stocks WHERE manual_note = '🟢 Good'"
+    cursor.execute(query)
+    stocks = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return stocks

@@ -130,3 +130,44 @@ class GeminiClient:
         
         logger.error("All available models failed or were blacklisted.")
         return None
+
+    def generate_tier_list_text(self, prompt_text: str, files: List[str] = None) -> Optional[str]:
+        """Generates raw Markdown text for the Tier List analysis or final ranking without forcing JSON output."""
+        gemini_files = []
+        if files:
+            for path in files:
+                if os.path.exists(path):
+                    try:
+                        logger.info(f"Uploading {path} to Gemini for Tier List...")
+                        g_file = self.client.files.upload(file=path)
+                        gemini_files.append(g_file)
+                    except Exception as e:
+                        logger.error(f"Upload failed for {path}: {e}")
+
+        prompt = [prompt_text]
+        prompt.extend(gemini_files)
+
+        for model_name in GEMINI_MODELS:
+            if self._is_model_blacklisted(model_name):
+                logger.warning(f"Skipping {model_name} - Blacklisted for today.")
+                continue
+
+            logger.info(f"Attempting Tier List generation with {model_name}...")
+            
+            try:
+                if not self.client:
+                    logger.error("Gemini client not initialized.")
+                    return None
+                    
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                
+                return response.text.strip()
+            except Exception as e:
+                logger.error(f"Tier List generation failed with {model_name}: {e}")
+                self._blacklist_model(model_name)
+        
+        logger.error("All available models failed to generate Tier List text.")
+        return None
