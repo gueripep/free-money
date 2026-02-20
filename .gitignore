@@ -1,0 +1,37 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Project Data (Do not commit the database or downloaded PDFs)
+data/stocks.db
+data/companies/**/*.pdf
+data/companies/**/*.md
+data/reports/
+data/model_blacklist.json
+
+# Streamlit App
+.streamlit/
+ui/.streamlit/
+
+# Python Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
