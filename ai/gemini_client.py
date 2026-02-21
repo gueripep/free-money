@@ -171,3 +171,44 @@ class GeminiClient:
         
         logger.error("All available models failed to generate Tier List text.")
         return None
+    def extract_calendar_events(self, pdf_path: str, current_date: str) -> List[Dict]:
+        """Extracts corporate events from a PDF using Gemini and the calendar prompt."""
+        from ai.prompts import get_calendar_extraction_prompt
+        
+        if not os.path.exists(pdf_path):
+            logger.error(f"PDF path does not exist: {pdf_path}")
+            return []
+
+        try:
+            logger.info(f"Uploading {pdf_path} for event extraction...")
+            g_file = self.client.files.upload(file=pdf_path)
+            
+            prompt_text = get_calendar_extraction_prompt(current_date)
+            
+            for model_name in GEMINI_MODELS:
+                if self._is_model_blacklisted(model_name):
+                    continue
+                
+                try:
+                    logger.info(f"Attempting event extraction with {model_name}...")
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=[prompt_text, g_file],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json"
+                        )
+                    )
+                    text = response.text.strip()
+                    if text.startswith("```json"):
+                        text = text.replace("```json", "", 1).replace("```", "", 1).strip()
+                    
+                    events = json.loads(text)
+                    return events if isinstance(events, list) else []
+                except Exception as e:
+                    logger.error(f"Event extraction failed with {model_name}: {e}")
+                    self._blacklist_model(model_name)
+                    
+        except Exception as e:
+            logger.error(f"Event extraction process failed: {e}")
+            
+        return []

@@ -38,9 +38,56 @@ def init_db():
             recommendation TEXT,
             ten_x_potential INTEGER DEFAULT 0,
             rationale TEXT,
+            lite_recommendation TEXT,
+            lite_rationale TEXT,
+            manual_note TEXT,
+            roic_historical TEXT,
+            roic_decay_rate REAL,
+            gross_margin_stability REAL,
+            sga_efficiency_delta REAL,
+            ebitda_margin_expansion REAL,
+            roiic REAL,
+            three_gp_score REAL,
+            altman_z_score REAL,
+            accruals_ratio REAL,
+            cash_runway_months REAL,
+            proxy_wacc REAL,
+            upcoming_events TEXT,
+            composite_score REAL,
+            mathematical_tier TEXT,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # Simple migration logic for existing databases
+    existing_columns = [col[1] for col in cursor.execute("PRAGMA table_info(stocks)").fetchall()]
+    new_columns = [
+        ("lite_recommendation", "TEXT"),
+        ("lite_rationale", "TEXT"),
+        ("manual_note", "TEXT"),
+        ("roic_historical", "TEXT"),
+        ("roic_decay_rate", "REAL"),
+        ("gross_margin_stability", "REAL"),
+        ("sga_efficiency_delta", "REAL"),
+        ("ebitda_margin_expansion", "REAL"),
+        ("roiic", "REAL"),
+        ("three_gp_score", "REAL"),
+        ("altman_z_score", "REAL"),
+        ("accruals_ratio", "REAL"),
+        ("cash_runway_months", "REAL"),
+        ("proxy_wacc", "REAL"),
+        ("upcoming_events", "TEXT"),
+        ("composite_score", "REAL"),
+        ("mathematical_tier", "TEXT")
+    ]
+    
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            try:
+                cursor.execute(f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError:
+                pass # Column exists or other error
+                
     conn.commit()
     conn.close()
 
@@ -136,6 +183,39 @@ def update_manual_note(isin: str, note: str):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE stocks SET manual_note = ?, last_updated = CURRENT_TIMESTAMP WHERE isin = ?", (note, isin))
+    conn.commit()
+    conn.close()
+
+def get_all_candidates() -> List[Dict]:
+    """Fetches all stocks that have passed the initial screen and have metrics populated."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    # We want stocks that have at least one significant metric populated
+    # and fit our basic micro-cap criteria
+    query = """
+        SELECT * FROM stocks 
+        WHERE 
+            market_cap BETWEEN 40000000 AND 1000000000
+            AND float_shares < 25000000
+            AND gross_margins > 0.6
+            AND operating_cash_flow > 0
+            AND revenue_growth IS NOT NULL
+            AND (manual_note IS NULL OR manual_note != '🔴 Bad')
+    """
+    cursor.execute(query)
+    stocks = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return stocks
+
+def update_ranking_data(isin: str, score: float, tier: str):
+    """Persists the mathematical ranking results to the database."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE stocks 
+        SET composite_score = ?, mathematical_tier = ?, last_updated = CURRENT_TIMESTAMP
+        WHERE isin = ?
+    ''', (score, tier, isin))
     conn.commit()
     conn.close()
 

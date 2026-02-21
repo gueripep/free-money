@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from urllib.parse import quote_plus
+import json
+from datetime import datetime
 
 # Ensure Streamlit runs with the correct path relative to the root
 import sys
@@ -11,24 +13,30 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import core.database as db
 from core.config import COMPANIES_DIR
 import importlib.util
+from ai.gemini_client import GeminiClient
 
-spec = importlib.util.spec_from_file_location("analyze_reports", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "03_analyze_reports.py"))
+spec = importlib.util.spec_from_file_location("analyze_reports", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "04_analyze_reports.py"))
 analyze_reports = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(analyze_reports)
 
-spec_rank = importlib.util.spec_from_file_location("rank_good_companies", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "04_rank_good_companies.py"))
-rank_good_companies = importlib.util.module_from_spec(spec_rank)
-spec_rank.loader.exec_module(rank_good_companies)
+spec_rank = importlib.util.spec_from_file_location("rank_candidates", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "03_rank_candidates.py"))
+rank_candidates = importlib.util.module_from_spec(spec_rank)
+spec_rank.loader.exec_module(rank_candidates)
 
 def load_data():
-    candidates = db.get_launchpad_candidates(100)
-    return pd.DataFrame(candidates)
+    candidates = db.get_all_candidates()
+    df = pd.DataFrame(candidates)
+    if not df.empty and 'composite_score' in df.columns:
+        # Fill None/NaN in composite_score with very low value for sorting
+        df['composite_score'] = pd.to_numeric(df['composite_score'], errors='coerce').fillna(-99.0)
+        df = df.sort_values(by='composite_score', ascending=False)
+    return df
 
 def render_markdown_analysis(ticker: str):
     company_dir = os.path.join(COMPANIES_DIR, ticker)
     md_path_lite = os.path.join(company_dir, "Analysis_Lite.md")
     md_path_deep = os.path.join(company_dir, "Analysis.md")
-    md_path_tier = os.path.join(company_dir, "TierList_Analysis.md")
+    md_path_deep = os.path.join(company_dir, "Analysis.md")
     
     interim_mds = []
     if os.path.exists(company_dir):
@@ -36,7 +44,6 @@ def render_markdown_analysis(ticker: str):
     
     has_lite = os.path.exists(md_path_lite)
     has_deep = os.path.exists(md_path_deep)
-    has_tier = os.path.exists(md_path_tier)
     
     if not has_lite and not has_deep and not interim_mds and not has_tier:
         st.warning(f"No analysis found for {ticker}.")
@@ -44,7 +51,6 @@ def render_markdown_analysis(ticker: str):
 
     tabs_to_create = []
     if has_deep: tabs_to_create.append("🚀 Rocket Fuel (Deep Dive)")
-    if has_tier: tabs_to_create.append("🏆 Tier List Profile")
     for imd in interim_mds:
         name = imd.replace("Analysis_Interim_", "").replace(".pdf.md", ".pdf").replace(".md", "")
         tabs_to_create.append(f"📅 Sell Signal: {name}")
@@ -61,13 +67,6 @@ def render_markdown_analysis(ticker: str):
                 st.markdown(content)
         tab_idx += 1
         
-    if has_tier:
-        with tabs[tab_idx]:
-            with open(md_path_tier, "r", encoding="utf-8") as f:
-                content = f.read()
-                content = content.replace("$", r"\$")
-                st.markdown(content)
-        tab_idx += 1
         
     for imd in interim_mds:
         with tabs[tab_idx]:
@@ -100,7 +99,7 @@ def run_analysis(ticker: str, lite_mode: bool = False, custom_question: str = No
 st.set_page_config(page_title="Architecture of Exponential Returns", layout="wide")
 
 st.sidebar.title("10-Bagger Navigation")
-view = st.sidebar.radio("Go to", ["The Launchpad", "The Cockpit", "The War Room (Tier List)"])
+view = st.sidebar.radio("Go to", ["The Launchpad", "🏆 Global Mathematical Ranking", "🛩️ The Cockpit"])
 
 if view == "The Launchpad":
     st.title("🚀 The Quantitative Launchpad")
@@ -120,7 +119,7 @@ if view == "The Launchpad":
     else:
         st.info("No candidates found in the database. Run the pipeline first.")
 
-elif view == "The Cockpit":
+elif view == "🛩️ The Cockpit":
     st.title("🛩️ The Cockpit (Deep Dive)")
     
     df = load_data()
@@ -129,23 +128,27 @@ elif view == "The Cockpit":
         st.stop()
         
     def format_ticker_option(ticker_str):
-        # We need to find the note for this ticker
         ticker_data = df[df['ticker'] == ticker_str]
         if not ticker_data.empty:
-            note = ticker_data.iloc[0].get('manual_note', '')
+            row = ticker_data.iloc[0]
+            note = row.get('manual_note', '')
+            tier = row.get('mathematical_tier', '')
+            
+            label = ticker_str
+            if tier:
+                tier_emoji = tier.split(' ')[0]
+                label = f"{tier_emoji} {label}"
             if note:
-                # Extract just the emoji for a cleaner dropdown
-                emoji = note.split(' ')[0] 
-                return f"{emoji} {ticker_str}"
+                note_emoji = note.split(' ')[0]
+                label = f"{label} {note_emoji}"
+            return label
         return ticker_str
 
     tickers = df['ticker'].dropna().unique()
     
-    # Initialize session state for the selected ticker if it doesn't exist
     if 'selected_ticker' not in st.session_state:
         st.session_state.selected_ticker = tickers[0] if len(tickers) > 0 else None
         
-    # Helper index finder
     try:
         default_index = list(tickers).index(st.session_state.selected_ticker)
     except ValueError:
@@ -154,7 +157,7 @@ elif view == "The Cockpit":
     col_prev, col_sel, col_next = st.columns([1, 4, 1])
     
     with col_prev:
-        st.markdown("<br>", unsafe_allow_html=True) # spacing alignment
+        st.markdown("<br>", unsafe_allow_html=True)
         if st.button("⬅️ Previous", use_container_width=True):
             new_idx = (default_index - 1) % len(tickers)
             st.session_state.selected_ticker = tickers[new_idx]
@@ -169,13 +172,12 @@ elif view == "The Cockpit":
         )
         
     with col_next:
-        st.markdown("<br>", unsafe_allow_html=True) # spacing alignment
+        st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Next ➡️", use_container_width=True):
             new_idx = (default_index + 1) % len(tickers)
             st.session_state.selected_ticker = tickers[new_idx]
             st.rerun()
     
-    # Update session state if user manually changes the dropdown
     if selected_ticker != st.session_state.selected_ticker:
         st.session_state.selected_ticker = selected_ticker
         st.rerun()
@@ -190,20 +192,11 @@ elif view == "The Cockpit":
         with col1:
             st.subheader("Candidate Overview")
             
-            # Manual Note Logic
             note_options = ["", "🔴 Bad", "🟡 Maybe", "🟢 Good"]
             current_note = stock.get('manual_note', "")
-            
-            # Ensure current note is in options, even if it's legacy data
-            if current_note not in note_options:
-                current_note = ""
+            if current_note not in note_options: current_note = ""
                 
-            selected_note = st.selectbox(
-                "My Verdict:", 
-                options=note_options, 
-                index=note_options.index(current_note),
-                key=f"note_{selected_ticker}"
-            )
+            selected_note = st.selectbox("My Verdict:", options=note_options, index=note_options.index(current_note), key=f"note_{selected_ticker}")
             
             if selected_note != current_note:
                 db.update_manual_note(stock['isin'], selected_note)
@@ -219,103 +212,136 @@ elif view == "The Cockpit":
             ir_query = quote_plus(f"{stock['name']} investor relations")
             st.markdown(f"🏛️ **[Investor Relations Search](https://www.google.com/search?q={ir_query})**")
             
-            # Check for PDF
+            # --- Upcoming Events Tracker ---
+            st.markdown("---")
+            st.markdown("### 📅 Upcoming Corporate Events")
+            events_json = stock.get('upcoming_events')
+            events = []
+            if events_json:
+                try:
+                    events = json.loads(events_json)
+                except:
+                    pass
+            
+            if events:
+                events_df = pd.DataFrame(events)
+                st.table(events_df)
+                if st.button("🗑️ Clear Events", key=f"clear_ev_{selected_ticker}"):
+                    db.update_stock_metrics(stock['isin'], {'upcoming_events': None})
+                    st.rerun()
+            else:
+                st.info("No upcoming events found. Fetch via yfinance or upload a Calendar PDF.")
+                if st.button("🔄 Try yfinance Fetch"):
+                    ticker_obj = yf.Ticker(selected_ticker)
+                    try:
+                        cal = ticker_obj.calendar
+                        if not cal.empty:
+                            # Format for our JSON list
+                            new_events = []
+                            for event_name, event_date in cal.items():
+                                if pd.notnull(event_date):
+                                    new_events.append({"date": str(event_date.date()), "event": str(event_name)})
+                            if new_events:
+                                db.update_stock_metrics(stock['isin'], {'upcoming_events': json.dumps(new_events)})
+                                st.success("Events fetched!")
+                                st.rerun()
+                        else:
+                            st.warning("Yahoo returned no calendar data.")
+                    except:
+                        st.error("Failed to fetch from Yahoo Finance.")
+
+            # Fallback PDF Calendar
+            uploaded_cal = st.file_uploader("Upload 'Financial Calendar' PDF", type="pdf", key=f"cal_up_{selected_ticker}")
+            if uploaded_cal:
+                cal_save_path = os.path.join(company_dir, f"Calendar_{uploaded_cal.name}")
+                with open(cal_save_path, "wb") as f:
+                    f.write(uploaded_cal.getbuffer())
+                
+                with st.spinner("AI extracting events from PDF..."):
+                    gemini = GeminiClient()
+                    extracted_events = gemini.extract_calendar_events(cal_save_path, datetime.now().strftime("%Y-%m-%d"))
+                    if extracted_events:
+                        db.update_stock_metrics(stock['isin'], {'upcoming_events': json.dumps(extracted_events)})
+                        st.success(f"Successfully extracted {len(extracted_events)} events!")
+                        st.rerun()
+                    else:
+                        st.error("AI could not find any events in this PDF.")
+
+            st.markdown("---")
             pdf_path = None
             for file in os.listdir(company_dir):
-                if file.lower().endswith('.pdf') and not file.startswith('Interim_'):
+                if file.lower().endswith('.pdf') and not file.startswith('Interim_') and not file.startswith('Calendar_'):
                     pdf_path = os.path.join(company_dir, file)
                     break
             
-            if st.button("🌐 Search & Analyze Metrics (Lite)", help="Runs a cheaper, faster analysis using basic metrics without needing a PDF."):
+            if st.button("🌐 Search & Analyze Metrics (Lite)", key=f"lite_{selected_ticker}"):
                 run_analysis(selected_ticker, lite_mode=True)
                 
             has_pdf = bool(pdf_path)
-            
-            st.markdown("---")
             st.markdown("### Document Status (Annual Report)")
             if has_pdf:
                 st.success(f"PDF Found: `{os.path.basename(pdf_path)}`")
                 if st.button("🗑️ Remove PDF", key=f"remove_pdf_{selected_ticker}"):
-                    try:
-                        os.remove(pdf_path)
-                        db.update_stock_metrics(stock['isin'], {'annual_report_path': None})
-                        st.toast("Annual Report PDF removed!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to remove PDF: {e}")
+                    os.remove(pdf_path)
+                    db.update_stock_metrics(stock['isin'], {'annual_report_path': None})
+                    st.rerun()
             else:
-                st.error("No Annual Report PDF found. Upload one to unlock the Rocket Fuel analysis.")
-                
+                st.error("No Annual Report PDF found.")
                 uploaded_file = st.file_uploader("Upload Annual Report PDF", type="pdf", key=f"annual_up_{selected_ticker}")
                 if uploaded_file is not None:
-                    # Save the file
                     pdf_save_path = os.path.join(company_dir, uploaded_file.name)
                     with open(pdf_save_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
-                    
-                    # Update DB
                     db.update_stock_metrics(stock['isin'], {'annual_report_path': pdf_save_path})
-                    st.success("Annual Report uploaded successfully!")
+                    st.success("Annual Report uploaded!")
                     st.rerun()
 
-            custom_question_annual = st.text_area("Optional: Custom Detective Question / Thesis Note", help="Ask the AI to investigate something specific in the Annual Report (e.g., 'Why is EV/EBITDA only 3.3x?')", key=f"q_{selected_ticker}")
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🚀 Run 'Rocket Fuel' Deep Dive (PDF)", disabled=not has_pdf, help="Requires an uploaded Annual Report PDF. Fully analyzes the actual document."):
+            custom_question_annual = st.text_area("Optional: Custom Detective Question / Thesis Note", key=f"q_{selected_ticker}")
+            if st.button("🚀 Run 'Rocket Fuel' Deep Dive (PDF)", disabled=not has_pdf, key=f"deep_{selected_ticker}"):
                 run_analysis(selected_ticker, lite_mode=False, custom_question=custom_question_annual)
 
             st.markdown("### Interim / Quarterly Reports")
             interim_pdfs = sorted([f for f in os.listdir(company_dir) if f.lower().endswith('.pdf') and f.startswith('Interim_')], reverse=True)
-            
             if interim_pdfs:
                 selected_interim = st.selectbox("Select Interim Report", interim_pdfs, key=f"interim_sel_{selected_ticker}")
                 interim_path = os.path.join(company_dir, selected_interim)
-                md_name = f"Analysis_{selected_interim}.md"
-                md_path = os.path.join(company_dir, md_name)
-                
+                md_path = os.path.join(company_dir, f"Analysis_{selected_interim}.md")
                 if not os.path.exists(md_path):
-                    custom_question_interim = st.text_area("Optional: Specific things to check in this report?", key=f"q_int_{selected_ticker}")
+                    custom_question_interim = st.text_area("Specific things to check?", key=f"q_int_{selected_ticker}")
                     if st.button(f"📅 Run Sell Signal Analysis on {selected_interim}"):
                         run_analysis(selected_ticker, quarterly_mode=True, quarterly_pdf_path=interim_path, custom_question=custom_question_interim)
-                else:
-                    st.success(f"Analysis already exists for `{selected_interim}`. View in tabs.")
-            else:
-                st.info("No interim reports found.")
-                
-            uploaded_interim = st.file_uploader("Upload Interim/Quarterly Report PDF", type="pdf", key=f"interim_up_{selected_ticker}")
+            
+            uploaded_interim = st.file_uploader("Upload Interim/Quarterly PDF", type="pdf", key=f"interim_up_{selected_ticker}")
             if uploaded_interim is not None:
                 interim_save_path = os.path.join(company_dir, f"Interim_{uploaded_interim.name}")
                 with open(interim_save_path, "wb") as f:
                     f.write(uploaded_interim.getbuffer())
-                st.success("Interim Report uploaded successfully!")
                 st.rerun()
 
         with col2:
             st.subheader("AI Investment Thesis")
             render_markdown_analysis(selected_ticker)
 
-elif view == "The War Room (Tier List)":
-    st.title("🏆 The War Room (Tier List)")
-    st.markdown("The final hierarchical ranking of all candidates marked as '🟢 Good', generated by evaluating them against the 5 dimensions of *The Calculus of Outperformance*.")
+elif view == "🏆 Global Mathematical Ranking":
+    st.title("🏆 Global Mathematical Ranking")
+    st.markdown("Hierarchical ranking of the entire candidate universe, calculated mathematically using *The Calculus of Outperformance*.")
     
     from core.config import DATA_DIR
-    tier_list_path = os.path.join(DATA_DIR, "findings", "TIER_LIST_RANKING.md")
+    tier_list_path = os.path.join(DATA_DIR, "findings", "TIER_LIST_RANKING_MATH.md")
     
     if os.path.exists(tier_list_path):
         with open(tier_list_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            content = content.replace("$", r"\$")
+            content = f.read().replace("$", r"\$")
             st.markdown(content)
         
-        st.markdown("---")
-        if st.button("🔄 Regenerate Tier List Ranking", help="This will re-run the deep dive across all 'Good' candidates and overwrite the existing ranking. This could take a few minutes if many candidates exist."):
-            with st.spinner("Analyzing 'Good' companies and generating the Tier List... (This might take a few minutes)"):
-                rank_good_companies.process_tier_list()
-            st.success("Analysis Complete!")
+        if st.button("🔄 Regenerate Global Mathematical Rankings", key="regen_tl"):
+            with st.spinner("Calculating Rankings..."):
+                rank_candidates.process_tier_list()
             st.rerun()
     else:
-        st.info("No Tier List Ranking generated yet. Grade some candidates as 'Good' in The Cockpit, then click the button below to generate it.")
-        if st.button("🚀 Generate Tier List Ranking", help="This will analyze all 'Good' candidates and produce a definitive Tier List. This could take a few minutes."):
-            with st.spinner("Analyzing 'Good' companies and generating the Tier List... (This might take a few minutes)"):
-                rank_good_companies.process_tier_list()
-            st.success("Analysis Complete!")
+        st.info("No Global Ranking generated yet.")
+        if st.button("🚀 Generate Global Mathematical Rankings", key="gen_tl"):
+            with st.spinner("Calculating Rankings..."):
+                rank_candidates.process_tier_list()
             st.rerun()
+

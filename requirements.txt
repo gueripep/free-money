@@ -7,3 +7,5 @@ google-generativeai
 streamlit
 pydantic
 duckduckgo-search
+tabulate
+
