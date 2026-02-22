@@ -3,6 +3,7 @@ import sys
 import datetime
 import json
 import yfinance as yf
+from typing import Optional, List, Dict
 from ai.gemini_client import GeminiClient
 import core.database as db
 from core.config import COMPANIES_DIR, DATA_DIR, setup_logging
@@ -100,7 +101,7 @@ def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysi
             
     logger.info(f"Updated {filename} in {company_dir}")
 
-def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None):
+def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None, gemini_client: Optional[GeminiClient] = None):
     """Processes a single stock for deep dive or lite analysis."""
     stock = db.get_stock(ticker)
     
@@ -188,7 +189,7 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
             except Exception as e:
                 logger.error(f"Failed to read previous thesis for {ticker}: {e}")
 
-    ai_client = GeminiClient()
+    ai_client = gemini_client or GeminiClient()
     analysis = ai_client.analyze_stock(stock, lite_mode, custom_question, doc_age_months, quarterly_mode, previous_thesis, quarterly_pdf_path)
     
     if analysis:
@@ -200,12 +201,12 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
         logger.error(f"Analysis failed for {ticker}")
 
 
-def run_launchpad_batch(limit: int = 5):
+def run_launchpad_batch(limit: int = 5, gemini_client: Optional[GeminiClient] = None):
     """Processes a batch of high-potential Launchpad candidates."""
     candidates = db.get_launchpad_candidates(limit)
     logger.info(f"Starting analysis for {len(candidates)} candidates.")
     
-    ai_client = GeminiClient()
+    ai_client = gemini_client or GeminiClient()
     for stock in candidates:
         ticker = stock.get('ticker') or stock['isin']
         logger.info(f"Analyzing {ticker}...")

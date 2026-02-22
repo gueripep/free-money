@@ -3,6 +3,11 @@ import time
 import yfinance as yf
 from typing import Dict, Optional, List
 import numpy as np
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from core.config import TICKERS_JSON, setup_logging
 import core.database as db
 
@@ -238,7 +243,7 @@ def ingest_to_db(stocks: List[Dict]):
     conn.commit()
     conn.close()
 
-def run_batch_update(limit: int = None):
+def run_batch_update(limit: int = None, progress_callback=None):
     """Updates missing Launchpad metrics in the database."""
     logger.info("Initializing PEA-PME database and populating base rows from JSON...")
     try:
@@ -277,9 +282,13 @@ def run_batch_update(limit: int = None):
 
     logger.info(f"Processing batch of {len(to_update)} stocks...")
     
-    for row in to_update:
+    total = len(to_update)
+    for i, row in enumerate(to_update):
         isin, ticker = row['isin'], row['ticker']
         
+        if progress_callback:
+            progress_callback(i + 1, total)
+            
         if not ticker:
             logger.info(f"Resolving ticker for ISIN: {isin}")
             ticker = resolve_ticker(isin)
@@ -315,4 +324,6 @@ def run_batch_update(limit: int = None):
         time.sleep(1) # Rate limit yfinance requests
 
 if __name__ == "__main__":
-    run_batch_update(limit=None)
+    import sys
+    limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    run_batch_update(limit=limit)

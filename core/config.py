@@ -15,7 +15,7 @@ LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 # DB & Data files
 DB_FILE = os.path.join(DATA_DIR, "stocks.db")
-EXCEL_FILE = os.path.join(DATA_DIR, "liste_des_valeurs_pea_pme.xlsx")
+UPLOAD_CSV = os.path.join(DATA_DIR, "ingest_batch.csv")
 TICKERS_JSON = os.path.join(DATA_DIR, "tickers.json")
 
 # Ensure required directories exist

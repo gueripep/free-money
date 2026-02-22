@@ -7,11 +7,14 @@ ENV/
 env.bak/
 venv.bak/
 
-# Project Data (Do not commit the database or downloaded PDFs)
-data/stocks.db
-data/companies/**/*.pdf
-data/companies/**/*.md
+# Project Data
+data/*.db
+data/*.xlsx
+data/*.csv
+data/companies/
 data/reports/
+data/findings/
+data/tickers.json
 data/model_blacklist.json
 
 # Streamlit App

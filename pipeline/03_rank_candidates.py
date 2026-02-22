@@ -2,6 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+from typing import Optional, List, Dict
 
 # Ensure script runs with the correct path relative to the root
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,7 +26,7 @@ The Calculus of Outperformance: Multi-Factor Weighted Scoring Model
 - Market Runway (10%): Market Penetration Rate, TAM/SOM.
 """
 
-def process_tier_list():
+def process_tier_list(gemini_client: Optional[GeminiClient] = None):
     logger.info("Starting Tier List Pipeline (Mathematical Ranking)")
     
     all_candidates = db.get_all_candidates()
@@ -127,7 +128,7 @@ def process_tier_list():
     # Stage 2: Synthesis and Tier List Ranking
     logger.info("=== STAGE 2: HIERARCHICAL TIER LIST RANKING (Synthesis) ===")
     
-    gemini = GeminiClient()
+    gemini = gemini_client or GeminiClient()
     methodology = load_methodology()
     
     ranking_prompt = get_tier_list_comparison_prompt(cohort_text, methodology)

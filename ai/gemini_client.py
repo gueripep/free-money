@@ -10,12 +10,14 @@ from ai.prompts import get_exponential_returns_prompt, get_lite_analysis_prompt,
 logger = setup_logging("gemini_client")
 
 class GeminiClient:
-    def __init__(self):
+    def __init__(self, api_key: Optional[str] = None):
         self.client = None
-        if GEMINI_API_KEY:
-            self.client = genai.Client(api_key=GEMINI_API_KEY)
+        current_key = api_key or GEMINI_API_KEY
+        
+        if current_key:
+            self.client = genai.Client(api_key=current_key)
         else:
-            logger.error("GEMINI_API_KEY not found in environment.")
+            logger.error("GEMINI_API_KEY not found. Please provide it in the UI or environment.")
         
         self.blacklist_file = os.path.join(DATA_DIR, "model_blacklist.json")
 

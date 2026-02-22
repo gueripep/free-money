@@ -15,6 +15,43 @@ from core.config import COMPANIES_DIR
 import importlib.util
 from ai.gemini_client import GeminiClient
 
+# Initialize Database
+db.init_db()
+
+# Page configuration
+st.set_page_config(page_title="10-Bagger Discovery", page_icon="📈", layout="wide")
+
+# Sidebar - API Key Management
+st.sidebar.title("Settings")
+user_api_key = st.sidebar.text_input(
+    "Google AI Studio API Key",
+    value=st.session_state.get("gemini_api_key", ""),
+    type="password",
+    help="Enter your API key from Google AI Studio. It is kept in session memory only."
+)
+if user_api_key:
+    st.session_state["gemini_api_key"] = user_api_key
+
+st.sidebar.markdown("---")
+st.sidebar.title("Data Management")
+if st.sidebar.button("🔄 Refresh All Portfolio Metrics", use_container_width=True, help="Update prices and financial ratios for all stocks currently in the database."):
+    progress_bar = st.sidebar.progress(0)
+    status_text = st.sidebar.empty()
+    
+    def update_progress(current, total):
+        progress_bar.progress(current / total)
+        status_text.text(f"Refreshing {current}/{total}...")
+
+    with st.spinner("Updating metrics for all existing stocks..."):
+        fetch_financials.run_batch_update(progress_callback=update_progress)
+    
+    status_text.text("Finished!")
+    st.success("Global Refresh Complete!")
+    st.rerun()
+
+# Initialize Gemini Client with session key
+gemini = GeminiClient(api_key=st.session_state.get("gemini_api_key"))
+
 spec = importlib.util.spec_from_file_location("analyze_reports", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "04_analyze_reports.py"))
 analyze_reports = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(analyze_reports)
@@ -23,13 +60,33 @@ spec_rank = importlib.util.spec_from_file_location("rank_candidates", os.path.jo
 rank_candidates = importlib.util.module_from_spec(spec_rank)
 spec_rank.loader.exec_module(rank_candidates)
 
+spec_ingest = importlib.util.spec_from_file_location("ingest_stocks", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "01_ingest_stocks.py"))
+ingest_stocks = importlib.util.module_from_spec(spec_ingest)
+spec_ingest.loader.exec_module(ingest_stocks)
+
+spec_fetch = importlib.util.spec_from_file_location("fetch_financials", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "02_fetch_financials.py"))
+fetch_financials = importlib.util.module_from_spec(spec_fetch)
+spec_fetch.loader.exec_module(fetch_financials)
+
 def load_data():
     candidates = db.get_all_candidates()
     df = pd.DataFrame(candidates)
-    if not df.empty and 'composite_score' in df.columns:
-        # Fill None/NaN in composite_score with very low value for sorting
-        df['composite_score'] = pd.to_numeric(df['composite_score'], errors='coerce').fillna(-99.0)
-        df = df.sort_values(by='composite_score', ascending=False)
+    if not df.empty:
+        # Pre-coerce numeric columns to handle "DATA NOT FOUND" strings safely
+        numeric_cols = [
+            'market_cap', 'float_shares', 'revenue_growth', 'profit_margins', 
+            'gross_margins', 'operating_margins', 'return_on_equity', 
+            'total_debt', 'debt_to_equity', 'free_cashflow', 'enterprise_value', 
+            'ebitda', 'operating_cash_flow', 'composite_score'
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        if 'composite_score' in df.columns:
+            df['composite_score'] = df['composite_score'].fillna(-99.0)
+            df = df.sort_values(by='composite_score', ascending=False)
+            
     return df
 
 def render_markdown_analysis(ticker: str):
@@ -45,7 +102,7 @@ def render_markdown_analysis(ticker: str):
     has_lite = os.path.exists(md_path_lite)
     has_deep = os.path.exists(md_path_deep)
     
-    if not has_lite and not has_deep and not interim_mds and not has_tier:
+    if not has_lite and not has_deep and not interim_mds:
         st.warning(f"No analysis found for {ticker}.")
         return
 
@@ -86,22 +143,62 @@ def render_markdown_analysis(ticker: str):
         tab_idx += 1
 
 def run_analysis(ticker: str, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None):
+    if not st.session_state.get("gemini_api_key"):
+        st.error("Please enter your Google AI Studio API Key in the sidebar first.")
+        return
+
     if quarterly_mode:
         mode_label = f"Quarterly Sell Signal Update using {os.path.basename(quarterly_pdf_path)}"
     else:
         mode_label = "Lite Search" if lite_mode else "Rocket Fuel PDF"
         
     with st.spinner(f"Running '{mode_label}' Deep Dive for {ticker}... (This takes about 60 seconds)"):
-        analyze_reports.process_target_stock(ticker, lite_mode=lite_mode, custom_question=custom_question, quarterly_mode=quarterly_mode, quarterly_pdf_path=quarterly_pdf_path)
+        analyze_reports.process_target_stock(ticker, lite_mode=lite_mode, custom_question=custom_question, quarterly_mode=quarterly_mode, quarterly_pdf_path=quarterly_pdf_path, gemini_client=gemini)
     st.success("Analysis Complete!")
     st.rerun()
 
-st.set_page_config(page_title="Architecture of Exponential Returns", layout="wide")
-
 st.sidebar.title("10-Bagger Navigation")
-view = st.sidebar.radio("Go to", ["The Launchpad", "🏆 Global Mathematical Ranking", "🛩️ The Cockpit"])
+view = st.sidebar.radio("Go to", ["🛰️ The Scanner", "The Launchpad", "🏆 Global Mathematical Ranking", "🛩️ The Cockpit"])
 
-if view == "The Launchpad":
+if view == "🛰️ The Scanner":
+    st.title("🛰️ The Scanner")
+    st.markdown("Upload a CSV file to scan a batch of stocks. The CSV should have a `Ticker` column.")
+    
+    from core.config import UPLOAD_CSV
+    
+    uploaded_csv = st.file_uploader("Upload Stocks CSV", type="csv")
+    if uploaded_csv:
+        with open(UPLOAD_CSV, "wb") as f:
+            f.write(uploaded_csv.getbuffer())
+        st.success(f"File `{uploaded_csv.name}` uploaded! Ready for ingestion.")
+        
+        if st.button("🚀 Start Batch Ingestion", use_container_width=True):
+            with st.spinner("Initializing batch..."):
+                ingest_stocks.run_ingestion()
+            
+            st.markdown("### 📊 Processing Batch")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def update_progress_unified(current, total):
+                progress_bar.progress(current / total)
+                status_text.text(f"Processing stock {current} of {total}...")
+
+            fetch_financials.run_batch_update(progress_callback=update_progress_unified)
+            
+            st.success("Batch Ingestion Complete!")
+            st.balloons()
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("### Required CSV Format")
+    st.markdown("The CSV must include at least a `Ticker` or `ISIN` column. You can also include a `Name` column.")
+    st.code("""Ticker,Name,ISIN
+AAPL,Apple Inc.,US0378331005
+MSFT,Microsoft Corp.,
+TSLA,Tesla,""", language="text")
+
+elif view == "The Launchpad":
     st.title("🚀 The Quantitative Launchpad")
     st.markdown("Stocks passing the strict Tier 1 filter (<$1B Cap, <25M Float, >60% Margins, +OCF).")
     
@@ -258,7 +355,7 @@ elif view == "🛩️ The Cockpit":
                     f.write(uploaded_cal.getbuffer())
                 
                 with st.spinner("AI extracting events from PDF..."):
-                    gemini = GeminiClient()
+                    # gemini = GeminiClient() # Removed global init, now using the global 'gemini' client
                     extracted_events = gemini.extract_calendar_events(cal_save_path, datetime.now().strftime("%Y-%m-%d"))
                     if extracted_events:
                         db.update_stock_metrics(stock['isin'], {'upcoming_events': json.dumps(extracted_events)})
@@ -335,13 +432,18 @@ elif view == "🏆 Global Mathematical Ranking":
             st.markdown(content)
         
         if st.button("🔄 Regenerate Global Mathematical Rankings", key="regen_tl"):
-            with st.spinner("Calculating Rankings..."):
-                rank_candidates.process_tier_list()
-            st.rerun()
+            if not st.session_state.get("gemini_api_key"):
+                st.error("Please enter your Google AI Studio API Key in the sidebar first.")
+            else:
+                with st.spinner("Calculating Rankings..."):
+                    rank_candidates.process_tier_list(gemini_client=gemini)
+                st.rerun()
     else:
         st.info("No Global Ranking generated yet.")
         if st.button("🚀 Generate Global Mathematical Rankings", key="gen_tl"):
-            with st.spinner("Calculating Rankings..."):
-                rank_candidates.process_tier_list()
-            st.rerun()
-
+            if not st.session_state.get("gemini_api_key"):
+                st.error("Please enter your Google AI Studio API Key in the sidebar first.")
+            else:
+                with st.spinner("Calculating Rankings..."):
+                    rank_candidates.process_tier_list(gemini_client=gemini)
+                st.rerun()
