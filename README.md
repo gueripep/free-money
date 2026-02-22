@@ -2,7 +2,7 @@
 
 A deep quantitative and narrative analysis pipeline using **Gemini** to identify high-growth stocks in the European PEA-PME market.
 
-This project automates the process of finding "10-Bagger" candidates by filtering the Euronext PEA-PME index based on strict quantitative metrics, followed by AI-powered forensic analysis of official financial reports.
+This project automates the process of finding "10-Bagger" candidates by filtering the provided companies based on strict quantitative metrics, followed by AI-powered forensic analysis of official financial reports.
 
 ## 🚀 Quick Start
 
