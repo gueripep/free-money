@@ -1,66 +1,52 @@
 # 10-Bagger Stock Finder (PEA-PME)
 
-A deep document analysis pipeline using **Gemini 3 Flash Preview** to identify high-growth stocks in the European PEA-PME market.
+A deep quantitative and narrative analysis pipeline using **Gemini** to identify high-growth stocks in the European PEA-PME market.
 
-This project automates the process of finding "10-Bagger" candidates by filtering the entire Euronext PEA-PME index based on strict quantitative metrics (Market Cap, Float, Margins, Cash Flow, ROE, etc.), and then using a Streamlit "Cockpit" to manually grade them and run deep-dive forensic analysis on their Annual and Interim Reports using AI.
+This project automates the process of finding "10-Bagger" candidates by filtering the Euronext PEA-PME index based on strict quantitative metrics, followed by AI-powered forensic analysis of official financial reports.
 
-## Getting Started
+## 🚀 Quick Start
 
 ### 1. Prerequisites
 - Python 3.9+
-- A Google API Key for Gemini.
+- A Google API Key for [Gemini AI Studio](https://aistudio.google.com/).
 - Install dependencies:
   ```powershell
   pip install -r requirements.txt
   ```
-- Copy `.env.example` to `.env` and add your Gemini API key:
-  ```
-  GEMINI_API_KEY="your_api_key_here"
-  ```
 
-### 2. Step 1: Data Ingestion
-1. **Manually download** the official Euronext PEA-PME Excel list from [Euronext's documentation](https://connect2.euronext.com/en/media/169).
-2. Save the `.xlsx` file into the `data/` directory.
-3. Run the ingest script to parse the Excel file and resolve ISINs into Yahoo Finance tickers:
-  ```powershell
-  python pipeline/01_ingest_pea_pme.py
-  ```
-*(This creates `data/tickers.json`)*
+### 2. Launch the Application
+Start the Streamlit dashboard as your primary control center:
+```powershell
+python -m streamlit run ui/app.py
+```
 
-### 3. Step 2: Fetch Financials (Populate Database)
-Run the fetching script. This will query Yahoo Finance for every ticker and populate the local SQLite database (`data/stocks.db`) with crucial metrics like Market Cap, Margins (Gross, Operating, Profit), Debt, Cash flow, and Valuation multiples. 
-*(Note: It throttles requests to 1 req/sec to prevent rate limiting).*
-  ```powershell
-  python pipeline/02_fetch_financials.py
-  ```
+### 3. Setup Your API Key
+In the **sidebar**, enter your Gemini API Key in the "Security & Configuration" section. This persists for your session and allows you to run AI features without needing a `.env` file for local development.
 
-### 4. Step 3: Global Mathematical Ranking (Pre-Filter)
-Before diving into manual analysis, run the statistical ranking engine. This evaluates all stocks in the database against *The Calculus of Outperformance* (Z-scores for Growth, Efficiency, Risk, and Valuation). It persists these scores to the DB, allowing the UI to show you the best opportunities first.
-  ```powershell
-  python pipeline/03_rank_candidates.py
-  ```
-*(This produces `data/findings/TIER_LIST_RANKING_MATH.md` and orders your database).*
+## 📥 Ingestion Workflow
 
-### 5. Step 4: Run the Dashboard
-Fire up the Streamlit interface to start filtering and analyzing stocks. Because you ran the Ranking Pre-Filter, the "Cockpit" will already be sorted with the highest-potential gems at the top.
-  ```powershell
-  python -m streamlit run ui/app.py
-  ```
+The ingestion process is now a **unified, one-click experience** via the UI:
 
-### 6. Step 5: Final Synthesis
-(Optional) After manual grading, you can re-run the ranking pipeline at any time to update the competitive tiers based on your latest research notes or newly fetched quarterly data.
+1.  **🛰️ The Scanner Tab**: Upload a CSV containing at least a `Ticker` or `ISIN` column.
+2.  **🚀 Start Batch Ingestion**: Click this single button to trigger:
+    - Automatic CSV parsing and local storage.
+    - Automatic ISIN-to-Ticker resolution via `yfinance`.
+    - Real-time fetching of financial metrics (Margins, Cap, Growth, etc.).
+    - Initial population of the local database (`data/stocks.db`).
 
-## Using The App 🛩️
+## 🛠️ Data Management
 
-### 🏆 Global Mathematical Ranking
-The engine performs a competitive Multi-Factor Tier List scoring across the *entire* candidate universe. It helps you focus your limited deep-dive time on candidates with the highest statistical probability of outperformance.
+- **Global Refresh**: In the sidebar, use "🔄 Refresh All Portfolio Metrics" to update price and ratio data for all stocks already in your database.
+- **Mathematical Tier List**: Use "🏆 Global Mathematical Ranking" to evaluate your entire universe against the *Calculus of Outperformance*. This orders candidates by statistical probability of 10x potential.
 
-### 🛩️ The Cockpit (Deep Dive)
-This is your main workflow hub. 
-1. **Selection**: Tickers are ordered by their **Mathematical Composite Score**. Best candidates first.
-2. **Grade It**: Assign a manual verdict (🔴 Bad, 🟡 Maybe, 🟢 Good).
-3. **Lite Search**: Fast, PDF-less AI synthesis from Live Yahoo Finance data.
-4. **Rocket Fuel Deep Dive**: Gemini 3 extracts narrative, moat, and red flags from uploaded Annual Reports.
-5. **Quarterly Sell Signal Update**: Use Interim reports to monitor thesis decay.
+## 🛩️ The Cockpit (Analysis Workflow)
 
-All markdown analyses generated by the AI are permanently saved locally in `data/companies/<TICKER>/` (and `data/findings/` for the tier list) and are instantly readable in the tabs.
+1.  **Deep Dive Selection**: Tickers are ordered by their **Mathematical Composite Score**. Focus on the top first.
+2.  **Manual Verdicts**: Assign a manual grade (🔴 Bad, 🟡 Maybe, 🟢 Good) to filter your list.
+3.  **AI Synthesis**:
+    - **Lite Search**: Real-time AI analysis based on Live Yahoo Finance data.
+    - **Full Report Analysis**: Upload an Annual Report (PDF) for Gemini to extract moat analysis, narrative red flags, and competitive advantage.
+    - **Sell Signal Monitoring**: Analyze Interim/Quarterly reports to check if your initial investment thesis still holds true.
+
+---
+**Note**: All AI-generated analyses are saved locally in `data/companies/<TICKER>/` for permanent offline access.
