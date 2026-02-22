@@ -25,8 +25,6 @@ In the **sidebar**, enter your Gemini API Key in the "Security & Configuration" 
 
 ## 📥 Ingestion Workflow
 
-The ingestion process is now a **unified, one-click experience** via the UI:
-
 1.  **🛰️ The Scanner Tab**: Upload a CSV containing at least a `Ticker` or `ISIN` column.
 2.  **🚀 Start Batch Ingestion**: Click this single button to trigger:
     - Automatic CSV parsing and local storage.

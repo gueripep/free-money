@@ -309,60 +309,6 @@ elif view == "🛩️ The Cockpit":
             ir_query = quote_plus(f"{stock['name']} investor relations")
             st.markdown(f"🏛️ **[Investor Relations Search](https://www.google.com/search?q={ir_query})**")
             
-            # --- Upcoming Events Tracker ---
-            st.markdown("---")
-            st.markdown("### 📅 Upcoming Corporate Events")
-            events_json = stock.get('upcoming_events')
-            events = []
-            if events_json:
-                try:
-                    events = json.loads(events_json)
-                except:
-                    pass
-            
-            if events:
-                events_df = pd.DataFrame(events)
-                st.table(events_df)
-                if st.button("🗑️ Clear Events", key=f"clear_ev_{selected_ticker}"):
-                    db.update_stock_metrics(stock['isin'], {'upcoming_events': None})
-                    st.rerun()
-            else:
-                st.info("No upcoming events found. Fetch via yfinance or upload a Calendar PDF.")
-                if st.button("🔄 Try yfinance Fetch"):
-                    ticker_obj = yf.Ticker(selected_ticker)
-                    try:
-                        cal = ticker_obj.calendar
-                        if not cal.empty:
-                            # Format for our JSON list
-                            new_events = []
-                            for event_name, event_date in cal.items():
-                                if pd.notnull(event_date):
-                                    new_events.append({"date": str(event_date.date()), "event": str(event_name)})
-                            if new_events:
-                                db.update_stock_metrics(stock['isin'], {'upcoming_events': json.dumps(new_events)})
-                                st.success("Events fetched!")
-                                st.rerun()
-                        else:
-                            st.warning("Yahoo returned no calendar data.")
-                    except:
-                        st.error("Failed to fetch from Yahoo Finance.")
-
-            # Fallback PDF Calendar
-            uploaded_cal = st.file_uploader("Upload 'Financial Calendar' PDF", type="pdf", key=f"cal_up_{selected_ticker}")
-            if uploaded_cal:
-                cal_save_path = os.path.join(company_dir, f"Calendar_{uploaded_cal.name}")
-                with open(cal_save_path, "wb") as f:
-                    f.write(uploaded_cal.getbuffer())
-                
-                with st.spinner("AI extracting events from PDF..."):
-                    # gemini = GeminiClient() # Removed global init, now using the global 'gemini' client
-                    extracted_events = gemini.extract_calendar_events(cal_save_path, datetime.now().strftime("%Y-%m-%d"))
-                    if extracted_events:
-                        db.update_stock_metrics(stock['isin'], {'upcoming_events': json.dumps(extracted_events)})
-                        st.success(f"Successfully extracted {len(extracted_events)} events!")
-                        st.rerun()
-                    else:
-                        st.error("AI could not find any events in this PDF.")
 
             st.markdown("---")
             pdf_path = None
@@ -423,6 +369,33 @@ elif view == "🏆 Global Mathematical Ranking":
     st.title("🏆 Global Mathematical Ranking")
     st.markdown("Hierarchical ranking of the entire candidate universe, calculated mathematically using *The Calculus of Outperformance*.")
     
+    with st.expander("ℹ️ How are these rankings calculated? (Methodology)"):
+        st.markdown("""
+        ### The Calculus of Outperformance
+        This model uses a **Multi-Factor Weighted Z-Score** to rank companies against their peers. Instead of absolute values, we measure how many *Standard Deviations* a company is from the average.
+        
+        **1. Capital Efficiency (30%)**
+        - **ROIIC**: Return on Incremental Invested Capital. Measures how much profit is generated for every Euro of new capital deployed.
+        - **3GP Score**: Measures gross profit relative to total assets.
+        
+        **2. Growth & Valuation (30%)**
+        - **Revenue Growth**: Pure top-line expansion.
+        - **Size Factor**: Logarithmic Market Cap. Smaller companies get a statistical "boost" due to higher growth ceiling.
+        
+        **3. Moat & Margin Durability (25%)**
+        - **EBITDA Expansion**: Trailing margin improvement.
+        - **ROIC Stability**: Low decay in returns on capital.
+        
+        **4. Downside & Forensic Risk (15%)**
+        - **Altman Z-Score**: Probability of bankruptcy (Higher is better).
+        - **Accruals Ratio**: Quality of earnings (Lower is better).
+        
+        ---
+        ⚠️ **Note on "Anomalies":** 
+        Because the model is **Additive**, a world-class score in one dimension (like a massive ROIIC jump) can push a company to the top even if other factors are average. 
+        *Example:* High ROIIC on low revenue growth often indicates **Operating Leverage** (cyclical recovery) rather than **Reinvestment Growth**. Use the *Cockpit* to verify the qualitative thesis!
+        """)
+
     from core.config import DATA_DIR
     tier_list_path = os.path.join(DATA_DIR, "findings", "TIER_LIST_RANKING_MATH.md")
     
