@@ -55,6 +55,13 @@ def init_db():
             upcoming_events TEXT,
             composite_score REAL,
             mathematical_tier TEXT,
+            organic_revenue_growth REAL,
+            inorganic_growth_ratio REAL,
+            is_acquirer BOOLEAN,
+            shares_outstanding_cagr REAL,
+            acquirer_type TEXT,
+            tier TEXT,
+            review_date TEXT,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -78,7 +85,14 @@ def init_db():
         ("proxy_wacc", "REAL"),
         ("upcoming_events", "TEXT"),
         ("composite_score", "REAL"),
-        ("mathematical_tier", "TEXT")
+        ("mathematical_tier", "TEXT"),
+        ("organic_revenue_growth", "REAL"),
+        ("inorganic_growth_ratio", "REAL"),
+        ("is_acquirer", "BOOLEAN"),
+        ("shares_outstanding_cagr", "REAL"),
+        ("acquirer_type", "TEXT"),
+        ("tier", "TEXT"),
+        ("review_date", "TEXT")
     ]
     
     for col_name, col_type in new_columns:

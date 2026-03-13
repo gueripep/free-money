@@ -3,7 +3,8 @@ import json
 import datetime
 from google import genai
 from google.genai import types
-from typing import Dict, Optional, List
+from pydantic import BaseModel
+from typing import Dict, Optional, List, Type, Any
 from core.config import GEMINI_API_KEY, GEMINI_MODELS, DATA_DIR, setup_logging
 from ai.prompts import get_exponential_returns_prompt, get_lite_analysis_prompt, get_quarterly_update_prompt
 
@@ -49,6 +50,75 @@ class GeminiClient:
             logger.warning(f"Blacklisted model {model_name} for today ({today}).")
         except Exception as e:
             logger.error(f"Error writing blacklist: {e}")
+
+    def create_cached_content(self, model_name: str, file_uri: str, display_name: str, ttl_minutes: int = 15) -> Optional[Any]:
+        """Creates a cached content object for an uploaded file."""
+        try:
+            if not self.client:
+                logger.error("Gemini client not initialized.")
+                return None
+                
+            logger.info(f"Creating Context Cache for {display_name} on model {model_name}...")
+            cache = self.client.caches.create(
+                model=model_name,
+                config=types.CreateCachedContentConfig(
+                    contents=[file_uri],
+                    display_name=display_name[:128], # API limit
+                    ttl=f"{ttl_minutes * 60}s"
+                )
+            )
+            return cache
+        except Exception as e:
+            logger.error(f"Failed to create cached content: {e}")
+            return None
+
+    def generate_structured_content(self, prompt: List[any], response_schema: Type[BaseModel], cached_content=None) -> Optional[BaseModel]:
+        """Generates content guaranteed to conform to a specific Pydantic schema."""
+        for model_name in GEMINI_MODELS:
+            if self._is_model_blacklisted(model_name):
+                continue
+
+            try:
+                if not self.client:
+                    logger.error("Gemini client not initialized.")
+                    return None
+                
+                # If cached_content is provided, it dictates the model name natively
+                # through the new genai SDK (the cache object has its model bound)
+                if cached_content:
+                    # When using a cache, contents must only contain the user prompt, not the file again
+                    response = self.client.models.generate_content(
+                       model=model_name,
+                       contents=prompt,
+                       config=types.GenerateContentConfig(
+                           response_mime_type="application/json",
+                           response_schema=response_schema,
+                           cached_content=cached_content.name
+                       )
+                    )
+                else:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=response_schema
+                        )
+                    )
+                
+                # The response.text should be valid JSON conforming to the schema
+                text = response.text.strip()
+                if text.startswith("```json"):
+                    text = text.replace("```json", "", 1).replace("```", "", 1).strip()
+                
+                parsed_data = json.loads(text)
+                return response_schema(**parsed_data) # Validate via Pydantic
+                
+            except Exception as e:
+                logger.error(f"Structured analysis failed with {model_name}: {e}")
+                self._blacklist_model(model_name)
+        
+        return None
 
     def analyze_stock(self, stock: dict, lite_mode: bool = False, custom_question: str = None, doc_age_months: int = None, quarterly_mode: bool = False, previous_thesis: str = None, quarterly_pdf_path: str = None) -> Optional[dict]:
         """Runs the deep dive analysis on a stock, optionally using Lite search mode instead of PDF uploads."""

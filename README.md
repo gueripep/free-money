@@ -1,6 +1,6 @@
-# 10-Bagger Stock Finder (PEA-PME)
+# 10-Bagger Stock Finder
 
-A deep quantitative and narrative analysis pipeline using **Gemini** to identify high-growth stocks in the European PEA-PME market.
+A deep quantitative and narrative analysis pipeline using **Gemini** to identify high-growth stocks.
 
 This project automates the process of finding "10-Bagger" candidates by filtering the provided companies based on strict quantitative metrics, followed by AI-powered forensic analysis of official financial reports.
 
@@ -10,14 +10,14 @@ This project automates the process of finding "10-Bagger" candidates by filterin
 - Python 3.9+
 - A Google API Key for [Gemini AI Studio](https://aistudio.google.com/).
 - Install dependencies:
-  ```powershell
-  pip install -r requirements.txt
+  ```bash
+  python3 -m pip install -r requirements.txt
   ```
 
 ### 2. Launch the Application
 Start the Streamlit dashboard as your primary control center:
-```powershell
-python -m streamlit run ui/app.py
+```bash
+python3 -m streamlit run ui/app.py
 ```
 
 ### 3. Setup Your API Key

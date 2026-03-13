@@ -17,6 +17,8 @@ METRICS CONTEXT (The Quantitative Launchpad):
 - Float: {stock.get('float_shares', 'N/A')} (Check: Is it < 25M?)
 - Gross Margin: {stock.get('gross_margins', 'N/A')} (Check: Is it > 60%?)
 - Operating Cash Flow: {stock.get('operating_cash_flow', 'N/A')} (Check: Is it self-funding?)
+- **M&A Status**: {'⚠️ HEAVY ACQUIRER (Inorganic Growth)' if stock.get('is_acquirer') else 'Organic Growth'}
+
 
 VALUATION CONTEXT (Live from Yahoo Finance):
 **CRITICAL INSTRUCTION: You MUST use the live metrics below as the single source of truth for the company's CURRENT valuation and pricing.**
@@ -38,7 +40,7 @@ VALUATION CONTEXT (Live from Yahoo Finance):
 OBJECTIVE:
 Provide a preliminary "Lite" thesis. Because you do not have the full Annual Report PDF, focus heavily on the financial physics (margins, cash flow) and any known qualitative facts about this industry. 
 CRITICAL DIRECTIVE: Before analyzing the specific metrics, step back and think globally about the business. What is the fundamental problem it solves? What are the structural realities of its industry? You must take the role of an objective, forensic analyst. Identify the primary structural barrier or risk that could prevent exponential growth, but explicitly counter-weigh this against the quantitative metrics. If the business has exceptional margins, cash flow, and a low valuation, do not arbitrarily penalize it.
-
+If the company is flagged as a 'HEAVY ACQUIRER', you MUST address the risk of roll-up strategies, goodwill impairment, and poor organic growth in your initial gut check.
 OUTPUT FORMAT (JSON ONLY):
 {{
     "recommendation": "Buy / Watch / Avoid",
@@ -77,6 +79,8 @@ METRICS CONTEXT (The Quantitative Launchpad):
 - Float: {stock.get('float_shares', 'N/A')} (Check: Is it < 25M?)
 - Gross Margin: {stock.get('gross_margins', 'N/A')} (Check: Is it > 60%?)
 - Operating Cash Flow: {stock.get('operating_cash_flow', 'N/A')} (Check: Is it self-funding?)
+- **M&A Status**: {'⚠️ HEAVY ACQUIRER (Inorganic Growth)' if stock.get('is_acquirer') else 'Organic Growth'}
+
 
 VALUATION CONTEXT (Live from Yahoo Finance):
 **CRITICAL INSTRUCTION: The Annual Report PDF contains HISTORICAL data. You MUST use the live metrics below as the single source of truth for the company's CURRENT valuation and pricing. Furthermore, compare the CURRENT DATE to the date of the documents to understand how old the data is.**
@@ -114,7 +118,7 @@ The quantitative metrics provided above from 'Yahoo Finance/API' are real-time o
 OBJECTIVE:
 Conduct a brutal, evidence-based deep dive using the provided Annual Report PDF to determine if this stock has the physics to be a 10-Bagger.
 CRITICAL DIRECTIVE: First, synthesize a "Global Thought". Understand the absolute reality of this business ecosystem, secular trends, and broader market positioning BEFORE looking for the "Rocket Fuel". You must act as a disciplined, objective analyst. Identify the primary structural barriers or risks, but weigh them fairly against the quantitative metrics and the deep dive evidence. Do not auto-penalize a stock if the evidence is strong.
-
+If the company is flagged as a 'HEAVY ACQUIRER', aggressively search the PDF for signs of 'diworsification', poor acquisition integration, ballooning goodwill, and stagnant organic growth.
 SECTION 1: THE FORENSIC LAUNCHPAD (Financial Health)
 - **Capital Intensity & Scalability**: Is this business mathematically capable of exponential growth without exponential capital requirements? Evaluate if revenue growth requires massive, linear capital deployment (e.g., buying physical buildings, heavy manufacturing) versus scalable operating leverage. **CRITICAL:** If the business model is inherently capital intensive with low asset turnover (e.g., Banks, REITs), it CANNOT be a 10-bagger candidate.
 - **Operating Leverage**: Analyze the cost structure.
@@ -236,13 +240,13 @@ def get_tier_list_comparison_prompt(all_analyses: str, methodology: str) -> str:
     """Prompt for Stage 2: Synthesis and Hierarchical Ranking."""
     
     return f"""
-Act as the Head of Quantitative Equity Research for a premier micro-cap hedge fund.
-Your quantitative team has already performed the hard mathematics for this cohort using Python (Z-Scores, Weightings, and Ranking).
+Act as the authoritative Lead Quantitative AI of a premier micro-cap hedge fund.
+You have directly calculated the mathematics (Z-Scores, Weightings, and Ranking) to generate the exact cohort data provided below.
 
 YOUR OBJECTIVE:
-Your task is to take the mathematical cohort data provided below and write a definitive, hierarchical Tier List report. 
+Your task is to review the mathematical cohort data you produced and write a definitive, hierarchical Tier List report explaining the outcome.
 
-**STRICT DIRECTIVE:** Your role is to provide qualitative synthesis and strategic context. Do NOT override the mathematical order unless you identify a catastrophic qualitative "Red Flag" (e.g. fraudulent management or a broken business model discovered in your latent knowledge) that the quantitative metrics missed.
+**STRICT DIRECTIVE:** Your role is to provide synthesis based ONLY on the numbers provided. Do not guess or hallucinate reasons for a rank—cite the exact sub-dimension scores (e.g., score_moat, score_efficiency, score_risk, score_growth_val) and underlying metrics to mathematically justify every placement. Do NOT override your mathematical order unless you identify a catastrophic qualitative "Red Flag" from your latent knowledge (e.g., known fraud) that the quantitative metrics missed.
 
 **MATHEMATICAL COHORT RANKING:**
 {all_analyses}
@@ -253,7 +257,7 @@ Your task is to take the mathematical cohort data provided below and write a def
 \"\"\"
 
 **INSTRUCTIONS:**
-1. **Explain the Math**: For each tier, explain *why* these companies were mathematically categorized there based on the 5 Dimensions.
+1. **Explain the Math**: For each tier and individual company, strictly explain *why* they were categorized there based on their specific dimension scores (e.g., "An outstanding score_efficiency of 2.4 pushed it to S-Tier despite a median score_growth_val").
 2. **Missing Data Handling**: If companies have 'DATA NOT FOUND' labels, flag them for manual verification but do not penalize their ranking if they otherwise scored well.
 
 OUTPUT FORMAT INSTRUCTIONS:

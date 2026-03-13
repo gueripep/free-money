@@ -1,19 +1,37 @@
 import os
+import sys
+
+# Define PROJECT_ROOT immediately
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 from urllib.parse import quote_plus
 import json
+import subprocess
 from datetime import datetime
-
-# Ensure Streamlit runs with the correct path relative to the root
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import core.database as db
-from core.config import COMPANIES_DIR
+import importlib
 import importlib.util
+import core.database as db
+from core.config import COMPANIES_DIR, DATA_DIR
 from ai.gemini_client import GeminiClient
+
+# Initialize Gemini Client (uses GEMINI_API_KEY from .env by default)
+gemini = GeminiClient()
+
+# Pipeline Imports via importlib
+def load_pipeline_module(module_name, filename):
+    spec = importlib.util.spec_from_file_location(module_name, os.path.join(PROJECT_ROOT, "pipeline", filename))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+analyze_reports = load_pipeline_module("analyze_reports", "04_analyze_reports.py")
+rank_candidates = load_pipeline_module("rank_candidates", "03_rank_candidates.py")
+ingest_stocks = load_pipeline_module("ingest_stocks", "01_ingest_stocks.py")
+fetch_financials = load_pipeline_module("fetch_financials", "02_fetch_financials.py")
 
 # Initialize Database
 db.init_db()
@@ -21,52 +39,87 @@ db.init_db()
 # Page configuration
 st.set_page_config(page_title="10-Bagger Discovery", page_icon="📈", layout="wide")
 
-# Sidebar - API Key Management
-st.sidebar.title("Settings")
-user_api_key = st.sidebar.text_input(
-    "Google AI Studio API Key",
-    value=st.session_state.get("gemini_api_key", ""),
-    type="password",
-    help="Enter your API key from Google AI Studio. It is kept in session memory only."
-)
-if user_api_key:
-    st.session_state["gemini_api_key"] = user_api_key
+# Removed frontend API Key Management per user request
+
+# --- Background Ingestion Monitoring ---
+def is_ingestion_running():
+    lock_file = os.path.join(DATA_DIR, ".ingestion.lock")
+    if os.path.exists(lock_file):
+        try:
+            with open(lock_file, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, ValueError, FileNotFoundError, OSError):
+            return False
+    return False
+
+def get_ingestion_stats():
+    """Returns (finished_count, total_count) for the progress bar."""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        # Count refreshed in last 24h (the 'done' part)
+        cursor.execute("SELECT COUNT(*) FROM stocks WHERE last_updated >= datetime('now', '-1 day')")
+        refreshed = cursor.fetchone()[0]
+        # Count total stocks in database (the 'total' part)
+        cursor.execute("SELECT COUNT(*) FROM stocks")
+        total = cursor.fetchone()[0]
+        conn.close()
+        return refreshed, total
+    except Exception:
+        return 0, 0
 
 st.sidebar.markdown("---")
-st.sidebar.title("Data Management")
-if st.sidebar.button("🔄 Refresh All Portfolio Metrics", use_container_width=True, help="Update prices and financial ratios for all stocks currently in the database."):
-    progress_bar = st.sidebar.progress(0)
-    status_text = st.sidebar.empty()
-    
-    def update_progress(current, total):
-        progress_bar.progress(current / total)
-        status_text.text(f"Refreshing {current}/{total}...")
+st.sidebar.title("🛠️ Data Control Center")
 
-    with st.spinner("Updating metrics for all existing stocks..."):
-        fetch_financials.run_batch_update(progress_callback=update_progress)
-    
-    status_text.text("Finished!")
-    st.success("Global Refresh Complete!")
+from core.config import UPLOAD_CSV
+uploaded_csv = st.sidebar.file_uploader("Batch Ingest (Upload CSV)", type="csv", help="CSV must have a 'Ticker' or 'ISIN' column.")
+if uploaded_csv:
+    with open(UPLOAD_CSV, "wb") as f:
+        f.write(uploaded_csv.getbuffer())
+    st.sidebar.success(f"File `{uploaded_csv.name}` ready!")
+
+running = is_ingestion_running()
+
+if st.sidebar.button("🚀 Sync & Update Database", use_container_width=True, help="Ingests new CSV data and refreshes stale/missing metrics.", disabled=running):
+    # Launch pipeline/run_full_sync.py as a background process
+    # This script handles its own lock and running both phases
+    script_path = os.path.join(PROJECT_ROOT, "pipeline", "run_full_sync.py")
+    subprocess.Popen([sys.executable, script_path], start_new_session=True)
+    st.toast("Background sync triggered!")
     st.rerun()
 
-# Initialize Gemini Client with session key
-gemini = GeminiClient(api_key=st.session_state.get("gemini_api_key"))
+st.sidebar.markdown("---")
 
-spec = importlib.util.spec_from_file_location("analyze_reports", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "04_analyze_reports.py"))
-analyze_reports = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(analyze_reports)
+@st.fragment(run_every=5)
+def sidebar_status():
+    is_running = is_ingestion_running()
+    refreshed, total = get_ingestion_stats()
+    
+    if is_running:
+        st.info("🚀 Background Ingestion Running")
+        st.progress(refreshed / max(total, 1), text=f"{refreshed}/{total} Updated")
+        if st.button("Stop Ingestion", use_container_width=True):
+            lock_file = os.path.join(DATA_DIR, ".ingestion.lock")
+            try:
+                with open(lock_file, "r") as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, 9)
+                if os.path.exists(lock_file):
+                    os.remove(lock_file)
+                st.toast("Ingestion halted.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to stop: {e}")
+    else:
+        if total > refreshed:
+            st.warning(f"⏸️ Ingestion Paused ({refreshed}/{total})")
+        else:
+            st.success("✅ Database up to date")
 
-spec_rank = importlib.util.spec_from_file_location("rank_candidates", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "03_rank_candidates.py"))
-rank_candidates = importlib.util.module_from_spec(spec_rank)
-spec_rank.loader.exec_module(rank_candidates)
+sidebar_status()
 
-spec_ingest = importlib.util.spec_from_file_location("ingest_stocks", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "01_ingest_stocks.py"))
-ingest_stocks = importlib.util.module_from_spec(spec_ingest)
-spec_ingest.loader.exec_module(ingest_stocks)
-
-spec_fetch = importlib.util.spec_from_file_location("fetch_financials", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline", "02_fetch_financials.py"))
-fetch_financials = importlib.util.module_from_spec(spec_fetch)
-spec_fetch.loader.exec_module(fetch_financials)
 
 def load_data():
     candidates = db.get_all_candidates()
@@ -77,11 +130,18 @@ def load_data():
             'market_cap', 'float_shares', 'revenue_growth', 'profit_margins', 
             'gross_margins', 'operating_margins', 'return_on_equity', 
             'total_debt', 'debt_to_equity', 'free_cashflow', 'enterprise_value', 
-            'ebitda', 'operating_cash_flow', 'composite_score'
+            'ebitda', 'operating_cash_flow', 'composite_score', 'inorganic_growth_ratio'
         ]
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+        if 'is_acquirer' in df.columns:
+            df['is_acquirer'] = df['is_acquirer'].fillna(0).astype(bool)
+        if 'shares_outstanding_cagr' in df.columns:
+            df['shares_outstanding_cagr'] = pd.to_numeric(df['shares_outstanding_cagr'], errors='coerce').fillna(0)
+        if 'acquirer_type' in df.columns:
+            df['acquirer_type'] = df['acquirer_type'].fillna('None')
 
         if 'composite_score' in df.columns:
             df['composite_score'] = df['composite_score'].fillna(-99.0)
@@ -143,9 +203,7 @@ def render_markdown_analysis(ticker: str):
         tab_idx += 1
 
 def run_analysis(ticker: str, lite_mode: bool = False, custom_question: str = None, quarterly_mode: bool = False, quarterly_pdf_path: str = None):
-    if not st.session_state.get("gemini_api_key"):
-        st.error("Please enter your Google AI Studio API Key in the sidebar first.")
-        return
+
 
     if quarterly_mode:
         mode_label = f"Quarterly Sell Signal Update using {os.path.basename(quarterly_pdf_path)}"
@@ -158,47 +216,9 @@ def run_analysis(ticker: str, lite_mode: bool = False, custom_question: str = No
     st.rerun()
 
 st.sidebar.title("10-Bagger Navigation")
-view = st.sidebar.radio("Go to", ["🛰️ The Scanner", "The Launchpad", "🏆 Global Mathematical Ranking", "🛩️ The Cockpit"])
+view = st.sidebar.radio("Go to", ["The Launchpad", "🏆 Global Mathematical Ranking", "🛩️ The Cockpit"])
 
-if view == "🛰️ The Scanner":
-    st.title("🛰️ The Scanner")
-    st.markdown("Upload a CSV file to scan a batch of stocks. The CSV should have a `Ticker` column.")
-    
-    from core.config import UPLOAD_CSV
-    
-    uploaded_csv = st.file_uploader("Upload Stocks CSV", type="csv")
-    if uploaded_csv:
-        with open(UPLOAD_CSV, "wb") as f:
-            f.write(uploaded_csv.getbuffer())
-        st.success(f"File `{uploaded_csv.name}` uploaded! Ready for ingestion.")
-        
-        if st.button("🚀 Start Batch Ingestion", use_container_width=True):
-            with st.spinner("Initializing batch..."):
-                ingest_stocks.run_ingestion()
-            
-            st.markdown("### 📊 Processing Batch")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            def update_progress_unified(current, total):
-                progress_bar.progress(current / total)
-                status_text.text(f"Processing stock {current} of {total}...")
-
-            fetch_financials.run_batch_update(progress_callback=update_progress_unified)
-            
-            st.success("Batch Ingestion Complete!")
-            st.balloons()
-            st.rerun()
-
-    st.markdown("---")
-    st.markdown("### Required CSV Format")
-    st.markdown("The CSV must include at least a `Ticker` or `ISIN` column. You can also include a `Name` column.")
-    st.code("""Ticker,Name,ISIN
-AAPL,Apple Inc.,US0378331005
-MSFT,Microsoft Corp.,
-TSLA,Tesla,""", language="text")
-
-elif view == "The Launchpad":
+if view == "The Launchpad":
     st.title("🚀 The Quantitative Launchpad")
     st.markdown("Stocks passing the strict Tier 1 filter (<$1B Cap, <25M Float, >60% Margins, +OCF).")
     
@@ -238,6 +258,14 @@ elif view == "🛩️ The Cockpit":
             if note:
                 note_emoji = note.split(' ')[0]
                 label = f"{label} {note_emoji}"
+            if row.get('is_acquirer'):
+                acquirer_type = row.get('acquirer_type', 'None')
+                if acquirer_type == 'Compounder':
+                    label = f"{label} 📈"
+                elif acquirer_type == 'Dilutive':
+                    label = f"{label} ⚠️"
+                else: 
+                    label = f"{label} 🛒"
             return label
         return ticker_str
 
@@ -304,6 +332,45 @@ elif view == "🛩️ The Cockpit":
             st.metric("Market Cap", f"${stock.get('market_cap', 0):,.0f}")
             st.metric("Float Shares", f"{stock.get('float_shares', 0):,.0f}")
             st.metric("Gross Margin", f"{stock.get('gross_margins', 0)*100:.1f}%" if stock.get('gross_margins') else "N/A")
+            
+            if stock.get('is_acquirer'):
+                acquirer_type = stock.get('acquirer_type', 'None')
+                try:
+                    shares_cagr = float(stock.get('shares_outstanding_cagr', 0.0))
+                    if pd.isna(shares_cagr): shares_cagr = 0.0
+                except (ValueError, TypeError):
+                    shares_cagr = 0.0
+                    
+                try:
+                    margin_trajectory = float(stock.get('ebitda_margin_expansion', 0.0))
+                    if pd.isna(margin_trajectory): margin_trajectory = 0.0
+                except (ValueError, TypeError):
+                    margin_trajectory = 0.0
+                
+                ebitda_val = stock.get('ebitda', 0.0)
+                debt_val = stock.get('total_debt', 0.0)
+                if ebitda_val and pd.notnull(ebitda_val) and ebitda_val > 0:
+                    debt_to_ebitda = (debt_val / ebitda_val) if pd.notnull(debt_val) else 0.0
+                else:
+                    debt_to_ebitda = 999.0 if (debt_val and pd.notnull(debt_val) and debt_val > 0) else 0.0
+                
+                badge = "M&A Compounder 📈" if acquirer_type == "Compounder" else ("M&A Diluter ⚠️" if acquirer_type == "Dilutive" else "M&A Heavy 🛒")
+                delta_color = "normal" if acquirer_type == "Compounder" else "inverse"
+                
+                st.metric("Inorganic Growth Ratio", f"{stock.get('inorganic_growth_ratio', 0)*100:.1f}%", f"- {badge}", delta_color=delta_color)
+                
+                with st.expander("📝 M&A Strategy Assessment"):
+                    st.markdown(f"**Verdict:** {badge}")
+                    if acquirer_type == "Compounder":
+                        st.success("This company is executing a successful Roll-up strategy. They are not mathematically penalized.")
+                    elif acquirer_type == "Dilutive":
+                        st.error("This company is executing a poor Roll-up strategy. Their revenue growth has been mathematically discounted in the rankings.")
+                    
+                    st.markdown(f"""
+                    *   **Funding (Share Count):** The share count has grown by **{shares_cagr*100:.1f}%** annually. {'(Accretive)' if shares_cagr <= 0.03 else '(Dilutive)'}
+                    *   **Execution (Margins):** EBITDA margins have expanded by **{margin_trajectory*100:.1f} pts**. {'(Successful Integration)' if margin_trajectory >= -0.02 else '(Diworsification)'}
+                    *   **Leverage (Debt/EBITDA):** **{debt_to_ebitda:.1f}x**. {'(Safe)' if debt_to_ebitda <= 4.0 else '(Over-Leveraged)'}
+                    """)
             
             st.markdown(f"📈 **[View on Yahoo Finance](https://finance.yahoo.com/quote/{selected_ticker})**")
             ir_query = quote_plus(f"{stock['name']} investor relations")
@@ -405,18 +472,12 @@ elif view == "🏆 Global Mathematical Ranking":
             st.markdown(content)
         
         if st.button("🔄 Regenerate Global Mathematical Rankings", key="regen_tl"):
-            if not st.session_state.get("gemini_api_key"):
-                st.error("Please enter your Google AI Studio API Key in the sidebar first.")
-            else:
-                with st.spinner("Calculating Rankings..."):
-                    rank_candidates.process_tier_list(gemini_client=gemini)
-                st.rerun()
+            with st.spinner("Calculating Rankings..."):
+                rank_candidates.process_tier_list(gemini_client=gemini)
+            st.rerun()
     else:
         st.info("No Global Ranking generated yet.")
         if st.button("🚀 Generate Global Mathematical Rankings", key="gen_tl"):
-            if not st.session_state.get("gemini_api_key"):
-                st.error("Please enter your Google AI Studio API Key in the sidebar first.")
-            else:
-                with st.spinner("Calculating Rankings..."):
-                    rank_candidates.process_tier_list(gemini_client=gemini)
-                st.rerun()
+            with st.spinner("Calculating Rankings..."):
+                rank_candidates.process_tier_list(gemini_client=gemini)
+            st.rerun()

@@ -2,9 +2,13 @@ import os
 import sys
 import datetime
 import json
+import tempfile
+import shutil
 import yfinance as yf
 from typing import Optional, List, Dict
 from ai.gemini_client import GeminiClient
+from ai.agents import TableExtractionAgent, NarrativeForensicAgent, SynthesisAgent
+from ai.critic import CriticValidator
 import core.database as db
 from core.config import COMPANIES_DIR, DATA_DIR, setup_logging
 
@@ -190,8 +194,109 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
                 logger.error(f"Failed to read previous thesis for {ticker}: {e}")
 
     ai_client = gemini_client or GeminiClient()
-    analysis = ai_client.analyze_stock(stock, lite_mode, custom_question, doc_age_months, quarterly_mode, previous_thesis, quarterly_pdf_path)
     
+    analysis = None
+    if lite_mode or quarterly_mode:
+        # Fallback to the old monolithic prompt for lite/quarterly for now, 
+        # as the new architecture is strictly for the Deep Dive Annual Report.
+        analysis = ai_client.analyze_stock(stock, lite_mode, custom_question, doc_age_months, quarterly_mode, previous_thesis, quarterly_pdf_path)
+    else:
+        # --- NEW AGENTIC INGESTION PIPELINE ---
+        logger.info(f"Initiating Multi-Agent Ingestion Pipeline for {ticker}...")
+        # 1. Upload the file once to the staging area
+        gemini_file = None
+        cached_content = None
+        temp_pdf_path = None
+        try:
+             # Sanitize the display name to pure ASCII for both Upload and Cache.
+             # The Gemini API throws UnicodeEncodeError if it encounters chars like 'Å'
+             raw_name = f"File_{ticker}_{os.path.basename(pdf_path)}"
+             safe_name = raw_name.encode("ascii", "ignore").decode("ascii")
+             
+             # Create a physical temporary file with a pure ASCII name to bypass SDK multipart bugs
+             temp_pdf_path = os.path.join(tempfile.gettempdir(), f"{safe_name}.pdf")
+             shutil.copy2(pdf_path, temp_pdf_path)
+             
+             logger.info(f"Uploading {pdf_path} to Gemini Staging as {safe_name}...")
+             gemini_file = ai_client.client.files.upload(
+                 file=temp_pdf_path,
+                 config={'display_name': safe_name[:128]}
+             )
+             
+             if os.path.exists(temp_pdf_path):
+                 os.remove(temp_pdf_path)
+                 
+             # 2. Freeze the context into a Cache to save tokens on multiple agent passes
+             if gemini_file:
+                 # We use the first model in the list (or a default) to bind the cache to
+                 from core.config import GEMINI_MODELS
+                 cache_model = GEMINI_MODELS[0] if GEMINI_MODELS else "models/gemini-1.5-pro-002"
+                 
+                 cache_name = f"Cache_{ticker}_{os.path.basename(pdf_path)}"
+                 safe_cache_name = cache_name.encode("ascii", "ignore").decode("ascii")
+                 
+                 cached_content = ai_client.create_cached_content(
+                     model_name=cache_model, 
+                     file_uri=gemini_file.uri, 
+                     display_name=safe_cache_name
+                 )
+        except Exception as e:
+             if temp_pdf_path and os.path.exists(temp_pdf_path):
+                 os.remove(temp_pdf_path)
+             logger.error(f"Upload or Cache creation failed for {pdf_path}: {e}")
+             return
+             
+        if gemini_file:
+            try:
+                # 3. Table Extraction (Using Cache if available)
+                table_agent = TableExtractionAgent(ai_client)
+                table_data = table_agent.extract(stock['name'], gemini_file=gemini_file, cached_content=cached_content)
+                
+                # 4. Critic Validation
+                critic = CriticValidator()
+                is_valid, errors = critic.validate(table_data)
+                
+                if not is_valid:
+                    logger.error(f"Pipeline Halted: Critic Validation Failed for {ticker}. Errors: {errors}")
+                    return
+                    
+                # 5. Narrative Extraction (Using the exact same Cache, saving 100k+ input tokens)
+                narrative_agent = NarrativeForensicAgent(ai_client)
+                narrative_data = narrative_agent.extract(stock['name'], gemini_file=gemini_file, cached_content=cached_content)
+                
+                # 6. Synthesis Agent (Final Formatting - No PDF needed here)
+                synthesis_agent = SynthesisAgent(ai_client)
+                final_report = synthesis_agent.synthesize(stock['name'], table_data, narrative_data, stock)
+            
+            finally:
+                # 7. Cleanup! This is critical to avoid paying for hanging cache storage
+                if cached_content:
+                    try:
+                        logger.info(f"Deleting Context Cache {cached_content.name}...")
+                        cached_content.delete()
+                    except Exception as e:
+                        logger.error(f"Failed to delete cache: {e}")
+                
+                # Optional: Delete the underlying file too if you don't want it accumulating
+                # try:
+                #     gemini_file.delete()
+                # except:
+                #     pass
+            
+            # 6. Map to UI format
+            if final_report:
+                analysis = {
+                    "recommendation": final_report.recommendation,
+                    "conviction_score": str(final_report.conviction_score), 
+                    "is_10_bagger_candidate": final_report.is_10_bagger_candidate,
+                    "global_thought": final_report.global_thought,
+                    "verdict_summary": final_report.verdict_summary,
+                    "analysis": final_report.analysis.model_dump()
+                }
+            else:
+                 logger.error("SynthesisAgent failed!")
+                 return
+        
     if analysis:
         generate_markdown_report(company_dir, ticker, stock, analysis, lite_mode=lite_mode, custom_question=custom_question, quarterly_mode=quarterly_mode, quarterly_pdf_path=quarterly_pdf_path)
         if not quarterly_mode:

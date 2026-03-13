@@ -3,7 +3,7 @@ openpyxl
 requests
 python-dotenv
 yfinance
-google-generativeai
+google-genai
 streamlit
 pydantic
 duckduckgo-search

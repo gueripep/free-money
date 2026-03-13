@@ -80,10 +80,23 @@ def process_tier_list(gemini_client: Optional[GeminiClient] = None):
     # 4. Growth-Adjusted Valuation (20%) & 5. Market Runway (10%)
     # Simplified proxy: High Growth + Low MCap/Valuation
     df['revenue_growth'] = pd.to_numeric(df['revenue_growth'], errors='coerce').fillna(0)
+    df['inorganic_growth_ratio'] = pd.to_numeric(df['inorganic_growth_ratio'], errors='coerce').fillna(0)
+    
+    # Penalty: Discount the revenue growth based on how much was bought
+    # ONLY penalize if they are a "Dilutive" acquirer. Compounders get a pass.
+    def get_organic_growth(row):
+        rev = row['revenue_growth']
+        if row.get('is_acquirer') == 1 and row.get('acquirer_type') == 'Dilutive':
+            ratio = min(float(row.get('inorganic_growth_ratio', 0)), 1.0)
+            return rev * (1 - ratio)
+        return rev
+        
+    df['organic_revenue_growth'] = df.apply(get_organic_growth, axis=1)
+    
     df['market_cap'] = pd.to_numeric(df['market_cap'], errors='coerce').fillna(1e12)
     df['log_mcap'] = np.log(df['market_cap'])
     df['score_growth_val'] = (
-        (df['revenue_growth'] - df['revenue_growth'].mean()) / (df['revenue_growth'].std() + 1e-6) -
+        (df['organic_revenue_growth'] - df['organic_revenue_growth'].mean()) / (df['organic_revenue_growth'].std() + 1e-6) -
         (df['log_mcap'] - df['log_mcap'].mean()) / (df['log_mcap'].std() + 1e-6)
     )
 
@@ -101,7 +114,7 @@ def process_tier_list(gemini_client: Optional[GeminiClient] = None):
     # Prepare Cohort Summary for LLM
     logger.info("Preparing Mathematical Cohort Summary for Stage 2 Synthesis...")
     
-    readable_cols = ['name', 'ticker', 'composite_score', 'roiic', 'three_gp_score', 'altman_z_score', 'revenue_growth', 'cash_runway_months']
+    readable_cols = ['name', 'ticker', 'composite_score', 'score_moat', 'score_efficiency', 'score_risk', 'score_growth_val', 'roiic', 'three_gp_score', 'altman_z_score', 'revenue_growth', 'cash_runway_months']
     df_summary = df[readable_cols].copy()
     
     # Map raw scores to intuitive tiers for the LLM

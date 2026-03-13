@@ -8,10 +8,14 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.config import TICKERS_JSON, setup_logging
+from core.config import TICKERS_JSON, setup_logging, DATA_DIR
 import core.database as db
 
+LOCK_FILE = os.path.join(DATA_DIR, ".ingestion.lock")
+
 logger = setup_logging("02_fetch_financials")
+
+# Helper to get financial metrics
 
 def safe_float(val, default=0.0):
     try:
@@ -19,10 +23,11 @@ def safe_float(val, default=0.0):
     except (ValueError, TypeError):
         return default
 
-def get_financial_metrics(ticker: str) -> Optional[Dict]:
+def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
     """Retrieves specific financial metrics for a given ticker."""
     try:
-        stock = yf.Ticker(ticker)
+        ticker = ticker_name
+        stock = yf.Ticker(ticker_name)
         info = stock.info
 
         # Initialize all metrics with "DATA NOT FOUND"
@@ -50,7 +55,10 @@ def get_financial_metrics(ticker: str) -> Optional[Dict]:
             'altman_z_score': "DATA NOT FOUND",
             'accruals_ratio': "DATA NOT FOUND",
             'cash_runway_months': "DATA NOT FOUND",
-            'proxy_wacc': 0.10 # Default
+            'proxy_wacc': 0.10, # Default
+            'inorganic_growth_ratio': 0.0,
+            'is_acquirer': False,
+            'shares_outstanding_cagr': 0.0 # Initialize
         }
 
         # Extracted metrics matching Launchpad criteria
@@ -80,6 +88,7 @@ def get_financial_metrics(ticker: str) -> Optional[Dict]:
             financials = stock.financials
             balance_sheet = stock.balance_sheet
             cashflow = stock.cashflow
+            income_stmt = stock.income_stmt
             
             # --- Historical Groos Margin Stability && SG&A Efficiency ---
             if 'Gross Profit' in financials.index and 'Total Revenue' in financials.index:
@@ -107,6 +116,21 @@ def get_financial_metrics(ticker: str) -> Optional[Dict]:
             if rev_growth is not None:
                 metrics['three_gp_score'] = (3 * (rev_growth * 100)) + (ebitda_margin * 100)
 
+            # --- EBITDA Margin Expansion ---
+            if not financials.empty and 'Total Revenue' in financials.index:
+                if 'EBITDA' in financials.index or 'Normalized EBITDA' in financials.index:
+                    ebitda_key = 'EBITDA' if 'EBITDA' in financials.index else 'Normalized EBITDA'
+                    ebitda_data = financials.loc[ebitda_key]
+                    rev_data = financials.loc['Total Revenue']
+                    margins = []
+                    for e, r in zip(ebitda_data, rev_data):
+                        e_val = safe_float(e)
+                        r_val = safe_float(r)
+                        if isinstance(e_val, (int, float)) and isinstance(r_val, (int, float)) and r_val > 0:
+                            margins.append(e_val / r_val)
+                    if len(margins) >= 2:
+                        metrics['ebitda_margin_expansion'] = margins[0] - margins[-1]
+
             # --- Altman Z-Score ---
             if not balance_sheet.empty and not financials.empty:
                 try:
@@ -130,6 +154,21 @@ def get_financial_metrics(ticker: str) -> Optional[Dict]:
                     metrics['altman_z_score'] = z_score
                 except Exception as e:
                     logger.debug(f"Missing fields for Altman Z-Score for {ticker}: {e}")
+            # --- Share Dilution Tracking (Roll-up Screener) ---
+            shares_cagr = 0.0
+            if not income_stmt.empty and 'Basic Average Shares' in income_stmt.index:
+                shares_data = income_stmt.loc['Basic Average Shares'].dropna()
+                if len(shares_data) >= 3:
+                     curr_shares = safe_float(shares_data.iloc[0])
+                     old_shares = safe_float(shares_data.iloc[2]) # 3 years ago
+                     if old_shares > 0 and curr_shares > 0:
+                         shares_cagr = (curr_shares / old_shares) ** (1/2) - 1
+                elif len(shares_data) == 2:
+                     curr_shares = safe_float(shares_data.iloc[0])
+                     old_shares = safe_float(shares_data.iloc[1])
+                     if old_shares > 0 and curr_shares > 0:
+                         shares_cagr = (curr_shares / old_shares) - 1
+            metrics['shares_outstanding_cagr'] = shares_cagr
 
             # --- Accruals Ratio ---
             if not cashflow.empty and not financials.empty and not balance_sheet.empty:
@@ -186,6 +225,71 @@ def get_financial_metrics(ticker: str) -> Optional[Dict]:
                 
                 if len(roic_hist) >= 2:
                     metrics['roic_decay_rate'] = (roic_hist[0] - roic_hist[1]) / abs(roic_hist[1]) if roic_hist[1] != 0 else 0
+
+            # --- Inorganic Growth Detection (M&A) ---
+            inorganic_ratio = 0.0
+            is_acquirer = False
+            
+            # Sub-check 1: Current Cash Flow Outflows (TTM)
+            if not cashflow.empty:
+                ocf = safe_float(cashflow.loc['Operating Cash Flow'].iloc[0]) if 'Operating Cash Flow' in cashflow.index else 0.0
+                purchase_of_business = safe_float(cashflow.loc['Purchase Of Business'].iloc[0]) if 'Purchase Of Business' in cashflow.index else 0.0
+                
+                if ocf > 0:
+                    if purchase_of_business < 0:
+                        # Explicit Purchase Of Business line exists
+                        inorganic_ratio_cf = abs(purchase_of_business) / ocf
+                        inorganic_ratio += inorganic_ratio_cf
+                    else:
+                        # Fallback: Unexplained Investing Cash Flow
+                        inv_cf = safe_float(cashflow.loc['Investing Cash Flow'].iloc[0]) if 'Investing Cash Flow' in cashflow.index else 0.0
+                        capex = safe_float(cashflow.loc['Capital Expenditure'].iloc[0]) if 'Capital Expenditure' in cashflow.index else 0.0
+                        if inv_cf < 0:
+                            unexplained_investing = abs(inv_cf) - abs(capex)
+                            if unexplained_investing > 0:
+                                inorganic_ratio_cf = unexplained_investing / ocf
+                                inorganic_ratio += inorganic_ratio_cf
+
+            # Sub-check 2: YoY Goodwill/Intangibles Jump (Balance Sheet) -> Catches Base Effect & missing categorizations
+            if not balance_sheet.empty:
+                total_assets = safe_float(balance_sheet.loc['Total Assets'].iloc[0]) if 'Total Assets' in balance_sheet.index else 1.0
+                
+                # Waterfall through possible naming conventions
+                gw_keys = ['Goodwill', 'Goodwill And Other Intangible Assets', 'Other Intangible Assets']
+                for key in gw_keys:
+                    if key in balance_sheet.index and len(balance_sheet.loc[key]) >= 2:
+                        current_gw = safe_float(balance_sheet.loc[key].iloc[0])
+                        prev_gw = safe_float(balance_sheet.loc[key].iloc[1])
+                        if current_gw > prev_gw and current_gw > 0:
+                            delta_gw = current_gw - prev_gw
+                            inorganic_ratio_gw = delta_gw / total_assets
+                            inorganic_ratio += inorganic_ratio_gw * 2  # Weight structural jumps heavily
+                            break # Found a match, stop looking further down the waterfall
+            
+            metrics['inorganic_growth_ratio'] = inorganic_ratio
+            if inorganic_ratio > 0.15: # 15% combined threshold
+                metrics['is_acquirer'] = True
+                
+                # The "Roll-up Screener" Logic
+                margin_trajectory = metrics.get('ebitda_margin_expansion', 0.0)
+                shares_cagr = metrics.get('shares_outstanding_cagr', 0.0)
+                
+                # Debt to EBITDA (Handle negative or zero ebitda safely)
+                ebitda = safe_float(metrics.get('ebitda', 0.0))
+                total_debt = safe_float(metrics.get('total_debt', 0.0))
+                if ebitda > 0:
+                    debt_to_ebitda = total_debt / ebitda
+                else:
+                    debt_to_ebitda = 999.0 if total_debt > 0 else 0.0
+                
+                # We calculated debt_to_ebitda above, but won't save it to db since it is not in the schema.
+                
+                if shares_cagr > 0.03 or margin_trajectory < -0.02 or debt_to_ebitda > 4.0:
+                    metrics['acquirer_type'] = "Dilutive" # Bad Acquirer: Issuing stock, margins diluting, or over-leveraged
+                else:
+                    metrics['acquirer_type'] = "Compounder" # Good Acquirer
+            else:
+                 metrics['acquirer_type'] = "None"
 
         except Exception as e:
             logger.warning(f"Could not calculate advanced metrics for {ticker}: {e}")
@@ -254,15 +358,23 @@ def run_batch_update(limit: int = None, progress_callback=None):
         logger.error(f"{TICKERS_JSON} not found. Run 01_ingest_pea_pme.py first.")
         return
 
-    logger.info("Fetching missing Launchpad metrics from Yahoo Finance...")
+    logger.info("Fetching missing or stale Launchpad metrics (30 days) from Yahoo Finance...")
     conn = db.get_connection()
     cursor = conn.cursor()
     
+    # Select stocks that either have NULL metrics OR haven't been updated in 30 days
     query1 = '''
-        SELECT isin, ticker FROM stocks 
-        WHERE (float_shares IS NULL OR market_cap IS NULL OR enterprise_value IS NULL) AND ticker IS NOT NULL
+        SELECT isin, ticker, name, last_updated 
+        FROM stocks 
+        WHERE ticker IS NOT NULL 
+          AND (
+            float_shares IS NULL 
+            OR market_cap IS NULL 
+            OR enterprise_value IS NULL 
+            OR last_updated < datetime('now', '-30 days')
+          )
     '''
-    query2 = "SELECT isin, ticker FROM stocks WHERE ticker IS NULL"
+    query2 = "SELECT isin, ticker, name, last_updated FROM stocks WHERE ticker IS NULL"
     
     if limit:
         query1 += f" LIMIT {limit}"
@@ -280,17 +392,19 @@ def run_batch_update(limit: int = None, progress_callback=None):
         logger.info("No actionable missing data found.")
         return
 
-    logger.info(f"Processing batch of {len(to_update)} stocks...")
+    logger.info(f"Processing {len(to_update)} stocks sequentially...")
     
     total = len(to_update)
+    
     for i, row in enumerate(to_update):
         isin, ticker = row['isin'], row['ticker']
+        name = row['name']
         
         if progress_callback:
             progress_callback(i + 1, total)
             
         if not ticker:
-            logger.info(f"Resolving ticker for ISIN: {isin}")
+            logger.info(f"Resolving ticker for ISIN: {isin} ({name})")
             ticker = resolve_ticker(isin)
             if ticker:
                 db.update_stock_metrics(isin, {'ticker': ticker})
@@ -307,23 +421,41 @@ def run_batch_update(limit: int = None, progress_callback=None):
                         json.dump(all_stocks, f, indent=4, ensure_ascii=False)
                 except Exception as e:
                     logger.error(f"Failed to save ticker {ticker} to JSON: {e}")
-                    
             else:
                 logger.warning(f"Could not resolve ticker for ISIN: {isin}")
-                # Mark as handled conceptually so we don't infinitely retry unless we add a flag, but for now we'll just continue
                 continue 
                 
-        logger.info(f"Fetching metrics for: {ticker}")
+        logger.info(f"[{i+1}/{total}] Processing: {ticker} ({name})")
         try:
             metrics = get_financial_metrics(ticker)
             if metrics:
                 db.update_stock_metrics(isin, metrics)
+                logger.info(f"Successfully updated {ticker}")
         except Exception as e:
-            logger.error(f"Failed processing {ticker}, likely rate limited.")
+            logger.error(f"Failed processing {ticker}: {e}")
             
-        time.sleep(1) # Rate limit yfinance requests
+        time.sleep(1.0) # Polite rate limit
 
 if __name__ == "__main__":
-    import sys
-    limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    run_batch_update(limit=limit)
+    if os.path.exists(LOCK_FILE):
+        # Check if the process is actually running (simple PID check)
+        try:
+            with open(LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0) # Throws error if process is dead
+            logger.error(f"Ingestion already running (PID: {pid}). Exiting.")
+            sys.exit(0)
+        except (ProcessLookupError, ValueError, FileNotFoundError, OSError):
+            logger.warning("Stale lock file found. Overwriting.")
+            pass
+
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+            
+        import sys
+        limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
+        run_batch_update(limit=limit)
+    finally:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
