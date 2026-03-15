@@ -38,23 +38,28 @@ VALUATION CONTEXT (Live from Yahoo Finance):
 - Free Cash Flow: {stock.get('free_cashflow', 'N/A')}{custom_directive}
 
 OBJECTIVE:
-Provide a preliminary "Lite" thesis. Because you do not have the full Annual Report PDF, focus heavily on the financial physics (margins, cash flow) and any known qualitative facts about this industry. 
-CRITICAL DIRECTIVE: Before analyzing the specific metrics, step back and think globally about the business. What is the fundamental problem it solves? What are the structural realities of its industry? You must take the role of an objective, forensic analyst. Identify the primary structural barrier or risk that could prevent exponential growth, but explicitly counter-weigh this against the quantitative metrics. If the business has exceptional margins, cash flow, and a low valuation, do not arbitrarily penalize it.
-If the company is flagged as a 'HEAVY ACQUIRER', you MUST address the risk of roll-up strategies, goodwill impairment, and poor organic growth in your initial gut check.
+Provide a highly readable, engaging, and jargon-free "Lite" introduction and analysis.
+The user's perspective: "I see these crazy good stats on my dashboard. Who are these guys? What do they actually make/sell? Why are the numbers so good right now? And what's the catch?"
+
+CRITICAL RULES:
+1. **NO JARGON IN THE INTRO:** Explain the business like you're talking to a smart friend at a dinner party. "They make X for Y." Not "They are a synergistic omnichannel solutions provider."
+2. **THE CATALYST:** Since this company appeared on a high-upside dashboard, there is likely a reason. A huge contract? A secular trend? A product launch? A massive price fluctuation? Find it and explain it simply.
+3. **GROUND THE NUMBERS:** Connect their abstract financial metrics to their real-world business model. Do not arbitrarily penalize them if they have high margins and low valuations, but be objective.
+
+If the company is flagged as a 'HEAVY ACQUIRER', you MUST address the risk of roll-up strategies, goodwill impairment, and poor organic growth in your reality check.
+
 OUTPUT FORMAT (JSON ONLY):
 {{
     "recommendation": "Buy / Watch / Avoid",
     "conviction_score": (1-10, be objective, reward strong metrics),
     "is_10_bagger_candidate": true/false,
-    "global_thought": "Synthesize the overarching business reality and industry ecosystem. Clearly identify the main structural barrier to exponential growth, but remain objective about the potential upside.",
+    "verdict_summary": "A punchy, 2-sentence final takeaway. Are they legitimately a great business or just a speculative flash in the pan?",
     "analysis": {{
-        "business_summary": "What does this company do? Explain clearly.",
-        "metrics_evaluation": "Is it financially healthy based on the numbers? Specifically evaluate the debt load and solvency if data is available.",
-        "valuation": "Compare the business quality against the current valuation multiples.",
-        "initial_gut_check": "Does it look like a potential multi-bagger, or is the business model inherently too capital intensive (e.g., Banks, REITs)?",
-        "unknowns": "What are the biggest questions the Annual Report needs to answer?"
-    }},
-    "verdict_summary": "[LITE SEARCH ANALYSIS] A fast, preliminary executive summary based on metrics."
+        "company_introduction": "What does this company actually do? Explain their core product, their customers, and how they make money in plain English. No corporate buzzwords. Make it extremely clear and accessible.",
+        "catalyst_explanation": "Why are the numbers popping? If there is something happening right now that explains a huge price fluctuation, explosive growth, or exceptional margins, explain what that 'big thing' is.",
+        "metrics_and_valuation": "The Reality Check. The dashboard shows great stats, but are they sustainable? Look at their debt, cash flow, and valuation (P/E, P/S). Is the market pricing them for perfection?",
+        "risks_and_unknowns": "The Catch. Every great story has risks. What are the obvious downsides? Is the industry too capital intensive? What are the biggest unanswered questions we'd need an Annual Report for?"
+    }}
 }}
 """
 

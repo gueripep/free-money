@@ -1,3 +1,4 @@
+# Force reload for new agents
 import os
 import sys
 
@@ -5,6 +6,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
+import importlib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -347,7 +349,7 @@ elif view == "🛩️ The Cockpit":
             st.subheader("Candidate Overview")
             
             note_options = ["", "🔴 Bad", "🟡 Maybe", "🟢 Good"]
-            current_note = stock.get('manual_note', "")
+            current_note = stock.get('manual_note') or ""
             if current_note not in note_options: current_note = ""
                 
             selected_note = st.selectbox("My Verdict:", options=note_options, index=note_options.index(current_note), key=f"note_{selected_ticker}")
@@ -358,11 +360,11 @@ elif view == "🛩️ The Cockpit":
                 st.rerun()
                 
             st.markdown("---")
-            st.metric("Market Cap", f"${stock.get('market_cap', 0):,.0f}")
+            st.metric("Market Cap", f"${(stock.get('market_cap') or 0):,.0f}")
             
             # Calculate Float Shares %
-            float_shares = stock.get('float_shares', 0)
-            shares_out = stock.get('shares_outstanding', 0)
+            float_shares = stock.get('float_shares') or 0
+            shares_out = stock.get('shares_outstanding') or 0
             
             if shares_out and shares_out > 0:
                 float_pct = (float_shares / shares_out) * 100
@@ -370,23 +372,23 @@ elif view == "🛩️ The Cockpit":
             else:
                 st.metric("Float Shares %", "N/A", help=f"Refresh metrics to calculate percentage. Current float: {float_shares:,.0f}" if float_shares else "No float data found.")
                 
-            st.metric("Gross Margin", f"{stock.get('gross_margins', 0)*100:.1f}%" if stock.get('gross_margins') else "N/A")
+            st.metric("Gross Margin", f"{(stock.get('gross_margins') or 0)*100:.1f}%" if stock.get('gross_margins') else "N/A")
             
                 
             try:
-                margin_trajectory = float(stock.get('ebitda_margin_expansion', 0.0))
+                margin_trajectory = float(stock.get('ebitda_margin_expansion') or 0.0)
                 if pd.isna(margin_trajectory): margin_trajectory = 0.0
             except (ValueError, TypeError):
                 margin_trajectory = 0.0
             
             try:
-                ebitda_val = float(stock.get('ebitda', 0.0))
+                ebitda_val = float(stock.get('ebitda') or 0.0)
                 if pd.isna(ebitda_val): ebitda_val = 0.0
             except (ValueError, TypeError):
                 ebitda_val = 0.0
                 
             try:
-                debt_val = float(stock.get('total_debt', 0.0))
+                debt_val = float(stock.get('total_debt') or 0.0)
                 if pd.isna(debt_val): debt_val = 0.0
             except (ValueError, TypeError):
                 debt_val = 0.0
@@ -412,7 +414,7 @@ elif view == "🛩️ The Cockpit":
             with q_col1:
                 # 1. Dilution Indicator
                 try:
-                    shares_cagr = float(stock.get('shares_outstanding_cagr', 0.0))
+                    shares_cagr = float(stock.get('shares_outstanding_cagr') or 0.0)
                 except (ValueError, TypeError):
                     shares_cagr = 0.0
                 
@@ -428,6 +430,30 @@ elif view == "🛩️ The Cockpit":
                 if stock.get('is_acquirer'):
                     ma_help = 'ℹ️ Methodology & Accuracy: This "Inorganic Growth Ratio" is a mechanical estimation. It triangulates 3-year average cash outflows with structural jumps in Balance Sheet Goodwill. It is designed for high-accuracy screening but is not a substitute for a manual audit of annual reports.'
                     render_custom_metric("Inorganic Growth", f"{stock.get('inorganic_growth_ratio', 0)*100:.1f}%", "#757575", ma_help)
+                
+                # 3. Structural Tier (Blind)
+                structural_tier = "N/A"
+                tier_color = "#757575"
+                tier_help = "Structural Quality Tier from Blind AI Evaluation. Tier 1: Exceptional, Tier 2: Defensible but Capital Intensive, Tier 3: Commoditized/Fragile."
+                
+                # Extract from rationale if possible
+                rationale = stock.get('rationale') or ''
+                if "DETAILS:" in rationale:
+                    try:
+                        details_json = rationale.split("DETAILS:")[1].strip()
+                        details = json.loads(details_json)
+                        blind = details.get('structural_quality_blind', {})
+                        if blind and blind.get('structural_tier'):
+                            t = blind.get('structural_tier')
+                            structural_tier = f"Tier {t}"
+                            if t == 1: tier_color = "#00c853"
+                            elif t == 2: tier_color = "#2e7d32"
+                            else: tier_color = "#d32f2f"
+                    except:
+                        pass
+                
+                if structural_tier != "N/A":
+                    render_custom_metric("Structural Tier", structural_tier, tier_color, tier_help)
 
             # 2. The Quantitative Engine (Universal)
             with st.expander("🛠️ The Quantitative Engine (Ranking Factors)", expanded=False):
@@ -516,7 +542,7 @@ elif view == "🛩️ The Cockpit":
 
             # 3. M&A Assessment (Conditional)
             if stock.get('is_acquirer'):
-                acquirer_type = stock.get('acquirer_type', 'None')
+                acquirer_type = stock.get('acquirer_type') or 'None'
                 badge = "M&A Compounder 📈" if acquirer_type == "Compounder" else ("M&A Diluter ⚠️" if acquirer_type == "Dilutive" else "M&A Heavy 🛒")
                 with st.expander("📝 M&A Strategy Assessment"):
                     st.markdown(f"**Verdict:** {badge}")

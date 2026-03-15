@@ -8,6 +8,7 @@ import yfinance as yf
 from typing import Optional, List, Dict
 from ai.gemini_client import GeminiClient
 from ai.agents import TableExtractionAgent, NarrativeForensicAgent, SynthesisAgent
+from ai.blind_agents import BlindExtractionAgent, BlindEvaluationAgent
 from ai.critic import CriticValidator
 import core.database as db
 from core.config import COMPANIES_DIR, DATA_DIR, setup_logging
@@ -34,25 +35,18 @@ def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysi
             
         f.write(f"# {title}: {stock['name']} ({ticker})\n\n")
         f.write(f"**Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"**Source Document:** {source}\n")
-        
-        if quarterly_mode:
-            f.write(f"**Thesis Holds:** {'YES' if analysis.get('thesis_holds') else 'NO'}\n")
-            f.write(f"**Recommendation:** {analysis.get('recommendation', 'N/A')}\n\n")
-        else:
-            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
-            f.write(f"**10-Bagger Candidate:** {'YES' if analysis.get('is_10_bagger_candidate') else 'NO'}\n")
-            f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
-        
-        f.write("## Executive Summary\n")
-        f.write(f"{analysis.get('verdict_summary', 'N/A')}\n\n")
-        
-        f.write("## 1. Global Synthesis & Business Reality\n")
-        f.write(f"{analysis.get('global_thought', 'N/A')}\n\n")
+        f.write(f"**Source Document:** {source}\n\n")
         
         details = analysis.get('analysis', {})
         
         if quarterly_mode:
+            # --- Quarterly mode: verdict at top is fine (it's a check, not a thesis) ---
+            f.write(f"**Thesis Holds:** {'YES' if analysis.get('thesis_holds') else 'NO'}\n")
+            f.write(f"**Recommendation:** {analysis.get('recommendation', 'N/A')}\n\n")
+            f.write("## Executive Summary\n")
+            f.write(f"{analysis.get('verdict_summary', 'N/A')}\n\n")
+            f.write("## 1. Global Synthesis & Business Reality\n")
+            f.write(f"{analysis.get('global_thought', 'N/A')}\n\n")
             f.write("## 2. Thesis Tracking\n")
             f.write(f"{details.get('thesis_tracking', 'N/A')}\n\n")
             f.write("## 3. Financial Update\n")
@@ -64,44 +58,104 @@ def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysi
             f.write("## 6. Valuation Check\n")
             f.write(f"{details.get('valuation_check', 'N/A')}\n\n")
         elif lite_mode:
-            f.write("## 2. Business Summary\n")
-            f.write(f"{details.get('business_summary', 'N/A')}\n\n")
-            
-            f.write("## 2. Metrics Evaluation\n")
-            f.write(f"{details.get('metrics_evaluation', 'N/A')}\n\n")
-            
-            f.write("## 3. Valuation Check\n")
-            f.write(f"{details.get('valuation', 'N/A')}\n\n")
-            
-            f.write("## 4. Initial Gut Check\n")
-            f.write(f"{details.get('initial_gut_check', 'N/A')}\n\n")
-            
-            f.write("## 5. Unknowns / Blank Spots\n")
-            f.write(f"{details.get('unknowns', 'N/A')}\n\n")
+            # --- Lite mode: simple summary format ---
+            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
+            f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
+            f.write("## 📖 What Does This Company Actually Do?\n")
+            f.write(f"{details.get('company_introduction', 'N/A')}\n\n")
+            f.write("## 🚀 The Catalyst (Why are the numbers popping?)\n")
+            f.write(f"{details.get('catalyst_explanation', 'N/A')}\n\n")
+            f.write("## 🔬 Reality Check (Metrics & Valuation)\n")
+            f.write(f"{details.get('metrics_and_valuation', 'N/A')}\n\n")
+            f.write("## 🚩 The Catch (Risks & Unknowns)\n")
+            f.write(f"{details.get('risks_and_unknowns', 'N/A')}\n\n")
+            f.write("## 💡 Final Takeaway\n")
+            f.write(f"{analysis.get('verdict_summary', 'N/A')}\n\n")
         else:
+            # --- DEEP DIVE: Evidence first, verdict last ---
+            
+            # Section 1: Company Introduction (opens the document, no verdict, no framing)
+            f.write("## 1. Company Introduction\n")
+            f.write(f"{details.get('company_introduction', 'N/A')}\n\n")
+            
+            # Sections 2-7: The evidence
             f.write("## 2. The Forensic Launchpad (Financials)\n")
             f.write(f"{details.get('forensic_launchpad', 'N/A')}\n\n")
             
-            f.write("## 3. The Story (Lynch)\n")
-            f.write(f"{details.get('the_story', 'N/A')}\n\n")
+            f.write("## 3. Competitive Moat\n")
+            f.write(f"{details.get('competitive_moat', 'N/A')}\n\n")
             
-            f.write("## 4. The Gate (Phelps)\n")
-            f.write(f"{details.get('the_gate', 'N/A')}\n\n")
+            f.write("## 4. Growth Catalysts & Risks\n")
+            f.write(f"{details.get('growth_catalysts_and_risks', 'N/A')}\n\n")
             
-            f.write("## 5. Rocket Fuel (O'Neil)\n")
-            f.write(f"{details.get('rocket_fuel', 'N/A')}\n\n")
+            f.write("## 5. Management Quality\n")
+            f.write(f"{details.get('management_quality', 'N/A')}\n\n")
             
-            f.write("## 6. Intelligent Fanatics (Cassel)\n")
-            f.write(f"{details.get('intelligent_fanatics', 'N/A')}\n\n")
-            
-            f.write("## 7. The Valuation Check\n")
+            f.write("## 6. Valuation\n")
             f.write(f"{details.get('valuation', 'N/A')}\n\n")
             
-            f.write("## 8. Red Flags\n")
+            f.write("## 7. Red Flags\n")
             f.write(f"{details.get('red_flags', 'N/A')}\n\n")
             
-            f.write("## 9. Pre-Mortem (The Bear Case)\n")
+            # Section 8: Scorecard (the mathematical basis for the verdict)
+            f.write("## 8. Conviction Scorecard\n")
+            f.write(f"{details.get('conviction_scorecard', 'N/A')}\n\n")
+            
+            # Section 9: Hard reconciliation (must come before verdict)
+            f.write("## 9. Where the Bull and Bear Cases Disagree\n")
+            f.write(f"{details.get('bull_bear_disagreements', 'N/A')}\n\n")
+            
+            # Section 10: Pre-mortem
+            f.write("## 10. Pre-Mortem (The Bear Case)\n")
             f.write(f"{details.get('pre_mortem', 'N/A')}\n\n")
+            
+            # Section 11: Blind Evaluation (full appendix)
+            if analysis.get('structural_quality_blind'):
+                blind = analysis['structural_quality_blind']
+                f.write("## 11. Structural Quality (Blind Evaluation)\n")
+                f.write(f"> [!NOTE]\n> This analysis was performed by an AI isolated from the company's name and specific financial figures to eliminate halo bias.\n\n")
+                f.write(f"**Structural Tier:** Tier {blind.get('structural_tier', 'N/A')}\n")
+                f.write(f"**Moat Rating:** {blind.get('moat_rating', 'N/A')}\n\n")
+
+                f.write(f"### 🎯 Industry Context\n")
+                f.write(f"{blind.get('industry_context', 'N/A')}\n\n")
+                
+                f.write(f"### ⚙️ The Engine (Mechanistic Summary)\n")
+                f.write(f"{blind.get('mechanistic_summary', 'N/A')}\n\n")
+                
+                if blind.get('primary_target_customers'):
+                    f.write(f"**Ideal Customer Profile:** {blind.get('primary_target_customers')}\n\n")
+                
+                f.write(f"### ⚡ Strategic Maneuvers & Tactical Pivots\n")
+                f.write(f"{blind.get('strategic_maneuvers', 'N/A')}\n\n")
+                
+                f.write(f"### 🛡️ Competitive Sustainability & Moat Durability\n")
+                f.write(f"{blind.get('competitive_moat_sustainability', 'N/A')}\n\n")
+                
+                f.write(f"### 🧠 Talent, Culture & 'Brain Drain' Risk\n")
+                f.write(f"{blind.get('talent_and_culture_risk', 'N/A')}\n\n")
+                
+                f.write(f"### 🧨 Tactical Conflicts (Strategic Tensions)\n")
+                f.write(f"> {blind.get('tactical_conflicts', 'N/A')}\n\n")
+                
+                f.write(f"### 🚀 Future Catalysts (Delayed Rocket Fuel)\n")
+                f.write(f"{blind.get('future_catalysts_detailed', 'N/A')}\n\n")
+                
+                f.write(f"### ⚠️ Primary Structural Risks\n")
+                f.write(f"{blind.get('primary_structural_risks', 'N/A')}\n\n")
+                
+                f.write(f"### 🏁 Final Quality Verdict\n")
+                f.write(f"**{blind.get('final_verdict', 'N/A')}**\n\n")
+            
+            # --- VERDICT (appears LAST, derived from the scorecard above) ---
+            f.write("---\n\n")
+            f.write("## Investment Conclusion\n\n")
+            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
+            f.write(f"**10-Bagger Candidate:** {'YES' if analysis.get('is_10_bagger_candidate') else 'NO'}\n")
+            f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
+            f.write(f"{analysis.get('verdict_summary', 'N/A')}\n\n")
+            f.write(f"### Synthesis\n")
+            f.write(f"{analysis.get('global_thought', 'N/A')}\n\n")
             
     logger.info(f"Updated {filename} in {company_dir}")
 
@@ -236,10 +290,11 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
                  safe_cache_name = cache_name.encode("ascii", "ignore").decode("ascii")
                  
                  cached_content = ai_client.create_cached_content(
-                     model_name=cache_model, 
-                     file_uri=gemini_file.uri, 
-                     display_name=safe_cache_name
-                 )
+                    model_name=cache_model, 
+                    file_uri=gemini_file.uri, 
+                    mime_type=gemini_file.mime_type,
+                    display_name=safe_cache_name
+                )
         except Exception as e:
              if temp_pdf_path and os.path.exists(temp_pdf_path):
                  os.remove(temp_pdf_path)
@@ -264,16 +319,26 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
                 narrative_agent = NarrativeForensicAgent(ai_client)
                 narrative_data = narrative_agent.extract(stock['name'], gemini_file=gemini_file, cached_content=cached_content)
                 
-                # 6. Synthesis Agent (Final Formatting - No PDF needed here)
+                # 6. Blind Qualitative Analysis (Two-Pass)
+                logger.info(f"Running Blind Qualitative Analysis for {ticker}...")
+                blind_extraction_agent = BlindExtractionAgent(ai_client)
+                blind_extraction_data = blind_extraction_agent.extract(stock['name'], gemini_file=gemini_file, cached_content=cached_content)
+                
+                blind_evaluation_data = None
+                if blind_extraction_data:
+                    blind_evaluation_agent = BlindEvaluationAgent(ai_client)
+                    blind_evaluation_data = blind_evaluation_agent.evaluate(blind_extraction_data)
+                
+                # 7. Synthesis Agent (Final Formatting - No PDF needed here)
                 synthesis_agent = SynthesisAgent(ai_client)
-                final_report = synthesis_agent.synthesize(stock['name'], table_data, narrative_data, stock)
+                final_report = synthesis_agent.synthesize(stock['name'], table_data, narrative_data, blind_evaluation_data, stock)
             
             finally:
                 # 7. Cleanup! This is critical to avoid paying for hanging cache storage
                 if cached_content:
                     try:
                         logger.info(f"Deleting Context Cache {cached_content.name}...")
-                        cached_content.delete()
+                        ai_client.client.caches.delete(name=cached_content.name)
                     except Exception as e:
                         logger.error(f"Failed to delete cache: {e}")
                 
@@ -285,13 +350,28 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
             
             # 6. Map to UI format
             if final_report:
+                # Compute conviction score from sub-scores using the prescribed weights
+                computed_conviction = round(
+                    0.25 * final_report.score_revenue_growth_quality +
+                    0.25 * final_report.score_moat_durability +
+                    0.20 * final_report.score_capital_efficiency +
+                    0.15 * final_report.score_management_quality +
+                    0.15 * final_report.score_risk_profile,
+                    2
+                )
                 analysis = {
                     "recommendation": final_report.recommendation,
-                    "conviction_score": str(final_report.conviction_score), 
+                    "score_revenue_growth_quality": final_report.score_revenue_growth_quality,
+                    "score_moat_durability": final_report.score_moat_durability,
+                    "score_capital_efficiency": final_report.score_capital_efficiency,
+                    "score_management_quality": final_report.score_management_quality,
+                    "score_risk_profile": final_report.score_risk_profile,
+                    "conviction_score": str(computed_conviction),
                     "is_10_bagger_candidate": final_report.is_10_bagger_candidate,
                     "global_thought": final_report.global_thought,
                     "verdict_summary": final_report.verdict_summary,
-                    "analysis": final_report.analysis.model_dump()
+                    "analysis": final_report.analysis.model_dump(),
+                    "structural_quality_blind": final_report.structural_quality_blind.model_dump() if final_report.structural_quality_blind else None
                 }
             else:
                  logger.error("SynthesisAgent failed!")

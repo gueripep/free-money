@@ -1,4 +1,4 @@
-from ai.schemas import TableExtractionSchema, QualitativeForensicsSchema
+from ai.schemas import TableExtractionSchema, QualitativeForensicsSchema, BlindQualitativeEvaluationSchema, FinalAnalysisOutputSchema
 from ai.gemini_client import GeminiClient
 from core.config import setup_logging
 import datetime
@@ -48,25 +48,50 @@ class NarrativeForensicAgent:
         self.client = client
         
     def extract(self, company_name: str, gemini_file=None, cached_content=None) -> QualitativeForensicsSchema:
-        """Extracts qualitative markers from the MD&A and Risk Factors."""
+        """Extracts qualitative markers from the MD&A and Risk Factors with balanced bull/bear lenses."""
         
         prompt_text = f"""
-        You are a senior qualitative forensic analyst.
-        Your objective is to read the Management Discussion & Analysis (Item 7) and Risk Factors (Item 1A) of the provided Annual Report and extract specific qualitative markers.
+        You are a senior qualitative forensic analyst performing a balanced extraction.
+        Your objective is to read the Management Discussion & Analysis (Item 7) and Risk Factors (Item 1A) of the provided Annual Report.
         
         COMPANY: {company_name}
         
         CRITICAL INSTRUCTIONS:
-        You must look for the following specific markers and populate the schema. Be concise but cite your findings (e.g., "(Item 7, pg. 42)").
+        For each extraction category, cite your findings (e.g., "(Item 7, pg. 42)").
+        Every bullish finding MUST be paired with its skeptical mirror. Do NOT treat skeptical findings as an afterthought.
         
-        1.  **Business Description**: A very concise, 2-3 sentence summary of what the business actually sells, how it generates revenue, and to whom.
-        2.  **Growth Catalysts ("Rocket Fuel")**: Look for mentions of new product launches, major contract wins, regulatory approvals, or capacity expansions that could sustainably accelerate earnings.
-        3.  **Structural Moat Evidence**: Look for evidence of high switching costs, network effects, or unique cost advantages.
-        4.  **Intelligent Fanatic Markers**: Look for an obsession with quality, extreme cost-consciousness/frugality, high insider ownership mentioned, or a culture of continuous improvement without executive bloat.
-        5.  **Diworsification Red Flags**: Mentions of integrating unrelated acquisitions that are dragging down core segment margins.
-        6.  **Aggressive Accounting Flags**: Look for changes in revenue recognition ("percentage of completion"), capitalized software costs, or shifting segment definitions.
-        7.  **Management Tone**: Provide a 1-sentence summary of how management sounds (e.g., promotional, defensive, pragmatic).
-        8.  **Valuation Commentary**: Look for mentions of share buyback authorizations, insider buying, or management explicitly discussing the company's intrinsic value being disconnected from the market price.
+        EXTRACTION CATEGORIES (populate every field in the schema):
+        
+        **SECTION 0 — COMPANY INTRODUCTION (MANDATORY)**
+        Write a single plain-language paragraph explaining what this company does, who its customers are, and where it sits in its market.
+        Rules: No jargon. No hype. No superlatives. No investor-speak. Write as if explaining to someone who has never heard of this company. One paragraph maximum.
+        
+        **SECTION 1 — BUSINESS DESCRIPTION**
+        A concise 2-3 sentence summary of what the business sells, how it generates revenue, and to whom.
+        
+        **SECTION 2 — GROWTH (Bull + Bear)**
+        - Growth Catalysts: New product launches, major contract wins, regulatory approvals, or capacity expansions that could sustainably accelerate earnings.
+        - Growth Quality Concerns (SKEPTICAL MIRROR): Is this growth durable or pulled forward? Look for one-time windfalls, channel stuffing, unsustainable discounting, heavy customer concentration, or cyclical tailwinds masquerading as structural growth.
+        
+        **SECTION 3 — MOAT (Bull + Bear)**
+        - Structural Moat Evidence: High switching costs, network effects, unique cost advantages, or regulatory barriers.
+        - Moat Fragility Evidence (SKEPTICAL MIRROR): Signs the moat is eroding — rising competitive pressure, low barriers to entry, commoditization, technology disruption, or customer alternatives emerging.
+        
+        **SECTION 4 — MANAGEMENT (Bull + Bear)**
+        - Intelligent Fanatic Markers: Extreme frugality, quality obsession, high insider ownership, continuous improvement culture.
+        - Management Risk Flags (SKEPTICAL MIRROR): Empire-building, promotional tone in filings, key-person dependency, excessive executive compensation, insider selling.
+        
+        **SECTION 5 — RED FLAGS (Standalone, Equally Weighted)**
+        These are NOT footnotes. Each is a standalone field that must receive equal analytical weight:
+        - Diworsification: Unrelated acquisitions subsidized by a profitable core segment.
+        - Aggressive Accounting: Changes in revenue recognition, capitalization of routine costs, segment shuffling.
+        - Other Red Flags: Regulatory risk, litigation, related-party transactions, or any other material concerns.
+        
+        **SECTION 6 — MANAGEMENT TONE**
+        A 1-sentence summary of how management sounds (e.g., promotional, defensive, pragmatic, candid).
+        
+        **SECTION 7 — VALUATION COMMENTARY**
+        Mentions of share buyback authorizations, insider buying, or management explicitly discussing the company's intrinsic value.
         """
         
         logger.info(f"NarrativeForensicAgent: Mining qualitative data for {company_name}...")
@@ -84,16 +109,37 @@ class SynthesisAgent:
     def __init__(self, client: GeminiClient):
         self.client = client
         
-    def synthesize(self, company_name: str, table_data: TableExtractionSchema, narrative_data: QualitativeForensicsSchema, stock_metrics: dict) -> FinalAnalysisOutputSchema:
-        """Synthesizes raw data into a readable, human-friendly markdown report."""
+    def synthesize(self, company_name: str, table_data: TableExtractionSchema, narrative_data: QualitativeForensicsSchema, blind_evaluation_data: BlindQualitativeEvaluationSchema, stock_metrics: dict) -> FinalAnalysisOutputSchema:
+        """Synthesizes raw data into a readable, human-friendly markdown report with computed conviction score."""
         from ai.schemas import FinalAnalysisOutputSchema # imported locally to avoid circular dependencies if any
         
-        prompt_text = f"""
-        You are a seasoned Chief Investment Officer (CIO) presenting a deep-dive "10-Bagger" thesis to your portfolio managers.
+        # Detect if we need hard reconciliation (Blind Evaluation rated moat as Narrow or below)
+        blind_moat_rating = "N/A"
+        if blind_evaluation_data:
+            blind_moat_rating = blind_evaluation_data.moat_rating or "N/A"
+        moat_is_weak = blind_moat_rating.lower() in ["narrow", "none", "n/a"]
         
-        You have just received the mathematically verified quantitative data and the raw qualitative notes from your forensic accounting team.
-        Your job is to translate this raw json data into a fluid, highly-readable, and compelling markdown report. 
+        reconciliation_directive = ""
+        if moat_is_weak and blind_evaluation_data:
+            reconciliation_directive = f"""
+        **HARD RECONCILIATION RULE (MANDATORY):**
+        The Blind Evaluation Agent rated Moat Durability as '{blind_moat_rating}'.
+        You MUST explicitly address this contradiction in the 'bull_bear_disagreements' section BEFORE issuing any verdict.
+        This section cannot be empty or dismissive. Explain concretely why you agree or disagree with the blind assessment,
+        citing specific evidence from both the Narrative Agent and the Blind Evaluation.
+        The 'bull_bear_disagreements' section MUST appear before the pre-mortem and before any investment conclusion.
+        """
+        
+        prompt_text = f"""
+        You are a disciplined, evidence-based Chief Investment Officer synthesizing a deep-dive thesis.
+        
+        Your job is to translate raw agent data into a fluid, highly-readable markdown report.
         DO NOT output raw JSON arrays in your text. Translate the numbers into readable financial commentary.
+        
+        **CRITICAL RULES:**
+        - NO INVESTOR FRAMEWORK LABELS: Do NOT mention Lynch, O'Neil, Phelps, Cassel, or any named investor framework in the output. These are internal analysis tools only. Use neutral, descriptive section headings.
+        - NO SUPERLATIVES IN THE OPENING: The document opens with the Company Introduction — a factual description of what the company does, who it serves, and where it sits in its market. No verdict, no framing, no opinion.
+        - THE VERDICT FOLLOWS THE SCORECARD: You must score the five dimensions FIRST. The conviction score and recommendation are DERIVED from those scores, not intuited. Do not form an opinion and then reverse-engineer justifications.
         
         COMPANY: {company_name}
         
@@ -106,17 +152,52 @@ class SynthesisAgent:
         FORENSIC NARRATIVE (From Narrative Agent):
         {narrative_data.model_dump_json(indent=2)}
         
+        STRUCTURAL QUALITY EVALUATION (BLIND — performed by an AI with no access to the company name or financials):
+        {blind_evaluation_data.model_dump_json(indent=2) if blind_evaluation_data else "N/A"}
+        BLIND MOAT RATING: {blind_moat_rating}
+        {reconciliation_directive}
+        
         INSTRUCTIONS:
-        1. Fill out the final schema using fluid, professional language.
-        2. In 'forensic_launchpad', summarize the revenue and margin trends based on the raw table data provided. Do NOT paste the json table. 
-        3. Determine the 'is_10_bagger_candidate' flag. It should only be true if there is strong moat evidence AND excellent financial trends.
-        4. Provide an overall conviction score out of 10.
+        
+        1. **Company Introduction** ('company_introduction'): Copy the plain-language Company Introduction from the Narrative Agent verbatim. No superlatives, no verdict, no framing.
+        
+        2. **Forensic Launchpad** ('forensic_launchpad'): Summarize the revenue and margin trends from the Table Agent data. Use prose, not raw JSON. Highlight inflection points and red-flag trends.
+        
+        3. **Competitive Moat** ('competitive_moat'): Write a BALANCED discussion. Present the moat evidence from the Narrative Agent AND the moat fragility evidence side by side. Reference the Blind Evaluation's moat assessment.
+        
+        4. **Growth Catalysts & Risks** ('growth_catalysts_and_risks'): Present the growth catalysts AND the growth quality concerns from the Narrative Agent. Is the growth durable or artificially inflated?
+        
+        5. **Management Quality** ('management_quality'): Present the intelligent fanatic markers AND the management risk flags. Include compensation, insider ownership, and tone analysis.
+        
+        6. **Valuation** ('valuation'): Discuss the current valuation (from Yahoo Finance metrics) relative to the quality of the business. Include insider buying/buyback signals.
+        
+        7. **Red Flags** ('red_flags'): This is a STANDALONE, EQUALLY-WEIGHTED section. Combine all red flags (diworsification, accounting, other) from the Narrative Agent into a comprehensive discussion. Do NOT minimize or footnote these.
+        
+        8. **Conviction Scorecard** ('conviction_scorecard'): 
+           Score each dimension independently on a 1-10 scale based ONLY on the evidence presented above:
+           - Revenue Growth Quality (weight: 25%)
+           - Moat Durability (weight: 25%)
+           - Capital Efficiency (weight: 20%)
+           - Management Quality (weight: 15%)
+           - Risk Profile (weight: 15%, where 10 = lowest risk)
+           Present as a Markdown table with columns: Dimension | Score | Weight | Weighted Score.
+           Include the final weighted average at the bottom.
+           **These five scores must also be output in the schema fields**: score_revenue_growth_quality, score_moat_durability, score_capital_efficiency, score_management_quality, score_risk_profile.
+           **The conviction_score field must equal the weighted average** (= 0.25*Growth + 0.25*Moat + 0.20*Efficiency + 0.15*Management + 0.15*Risk).
+        
+        9. **Where the Bull and Bear Cases Disagree** ('bull_bear_disagreements'): Explicitly reconcile contradictions between the Narrative Agent's bullish findings and the Blind Evaluation's skeptical assessment. If the Blind Evaluation rated moat as Narrow or None, this section is MANDATORY and must be substantive.
+        
+        10. **Pre-Mortem** ('pre_mortem'): The bear case — what could fundamentally break this thesis.
+        
+        11. **Recommendation and Verdict**: The 'recommendation' and 'verdict_summary' MUST follow FROM the scorecard. They cannot be determined before the scoring is complete.
+        
+        12. **Blind Evaluation Passthrough**: The 'structural_quality_blind' field in the output schema MUST be populated with the provided Blind Evaluation data.
+        
+        13. **10-Bagger Flag**: 'is_10_bagger_candidate' should only be true if there is strong moat evidence AND excellent financial trends AND the conviction score is >= 7.
         """
         
         logger.info(f"SynthesisAgent: Generating final readable markdown report for {company_name}...")
         
-        # We don't necessarily need the PDF context here since this agent just reads the outputs of the previous agents!
-        # But we pass the prompt to the structured generator.
         result = self.client.generate_structured_content([prompt_text], FinalAnalysisOutputSchema)
         if not result:
             logger.error("SynthesisAgent failed to return a valid schema.")

@@ -51,7 +51,7 @@ class GeminiClient:
         except Exception as e:
             logger.error(f"Error writing blacklist: {e}")
 
-    def create_cached_content(self, model_name: str, file_uri: str, display_name: str, ttl_minutes: int = 15) -> Optional[Any]:
+    def create_cached_content(self, model_name: str, file_uri: str, mime_type: str, display_name: str, ttl_minutes: int = 15) -> Optional[Any]:
         """Creates a cached content object for an uploaded file."""
         try:
             if not self.client:
@@ -62,7 +62,17 @@ class GeminiClient:
             cache = self.client.caches.create(
                 model=model_name,
                 config=types.CreateCachedContentConfig(
-                    contents=[file_uri],
+                    contents=[
+                        types.Content(
+                            parts=[
+                                types.Part.from_uri(
+                                    file_uri=file_uri,
+                                    mime_type=mime_type
+                                )
+                            ],
+                            role="user"
+                        )
+                    ],
                     display_name=display_name[:128], # API limit
                     ttl=f"{ttl_minutes * 60}s"
                 )
@@ -74,8 +84,15 @@ class GeminiClient:
 
     def generate_structured_content(self, prompt: List[any], response_schema: Type[BaseModel], cached_content=None) -> Optional[BaseModel]:
         """Generates content guaranteed to conform to a specific Pydantic schema."""
-        for model_name in GEMINI_MODELS:
-            if self._is_model_blacklisted(model_name):
+        # If cached_content is provided, it dictates the model name natively
+        # we must use the model the cache was created with.
+        models_to_try = GEMINI_MODELS
+        if cached_content:
+            # The cache object has a 'model' attribute like 'models/gemini-1.5-pro-002'
+            models_to_try = [cached_content.model]
+
+        for model_name in models_to_try:
+            if not cached_content and self._is_model_blacklisted(model_name):
                 continue
 
             try:
@@ -83,8 +100,6 @@ class GeminiClient:
                     logger.error("Gemini client not initialized.")
                     return None
                 
-                # If cached_content is provided, it dictates the model name natively
-                # through the new genai SDK (the cache object has its model bound)
                 if cached_content:
                     # When using a cache, contents must only contain the user prompt, not the file again
                     response = self.client.models.generate_content(
@@ -106,6 +121,10 @@ class GeminiClient:
                         )
                     )
                 
+                # Log usage metadata for transparency
+                meta = response.usage_metadata
+                logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
+
                 # The response.text should be valid JSON conforming to the schema
                 text = response.text.strip()
                 if text.startswith("```json"):
@@ -116,7 +135,11 @@ class GeminiClient:
                 
             except Exception as e:
                 logger.error(f"Structured analysis failed with {model_name}: {e}")
-                self._blacklist_model(model_name)
+                if not cached_content:
+                    self._blacklist_model(model_name)
+                else:
+                    # If it's a cache-tied model and it fails, we can't really fallback easily
+                    break
         
         return None
 
@@ -179,6 +202,11 @@ class GeminiClient:
                         response_mime_type="application/json"
                     )
                 )
+                
+                # Log usage metadata
+                meta = response.usage_metadata
+                logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
+
                 text = response.text.strip()
                 if text.startswith("```json"):
                     text = text.replace("```json", "", 1).replace("```", "", 1).strip()
@@ -236,6 +264,10 @@ class GeminiClient:
                     contents=prompt
                 )
                 
+                # Log usage metadata
+                meta = response.usage_metadata
+                logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
+
                 return response.text.strip()
             except Exception as e:
                 logger.error(f"Tier List generation failed with {model_name}: {e}")
@@ -270,6 +302,11 @@ class GeminiClient:
                             response_mime_type="application/json"
                         )
                     )
+                    
+                    # Log usage metadata
+                    meta = response.usage_metadata
+                    logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
+
                     text = response.text.strip()
                     if text.startswith("```json"):
                         text = text.replace("```json", "", 1).replace("```", "", 1).strip()

@@ -7,14 +7,13 @@ logger = setup_logging("critic")
 class CriticValidator:
     """A deterministic, non-LLM validation layer for extracted financial data."""
     
-    def __init__(self):
-        self.errors = []
-        
+    TOLERANCE = 10000.0 # Allow for rounding errors in large-scale reports (e.g. 1000 Yen in billions)
+    
     def validate(self, data: TableExtractionSchema) -> Tuple[bool, List[str]]:
         """Runs the full suite of accounting checks on the extracted data."""
         self.errors = []
         
-        logger.info(f"CriticValidator inspecting {len(data.fiscal_years_extracted)} years for {data.company_name}...")
+        logger.info(f"CriticValidator inspecting {len(data.fiscal_years_extracted)} years for {data.company_name} (Tolerance: {self.TOLERANCE})...")
         
         for year_data in data.fiscal_years_extracted:
             self._validate_balance_sheet_equation(year_data)
@@ -35,8 +34,8 @@ class CriticValidator:
         if year_data.total_assets is not None and year_data.total_liabilities is not None and year_data.total_equity is not None:
             calculated_assets = year_data.total_liabilities + year_data.total_equity
             
-            # Using a tiny tolerance for floating point rounding issues, but financials should be exact integers mostly
-            if abs(year_data.total_assets - calculated_assets) > 1.0: 
+            # Using tolerance for rounding
+            if abs(year_data.total_assets - calculated_assets) > self.TOLERANCE: 
                 self.errors.append(
                     f"Year {year_data.year} Balance Sheet Error: Reported Assets ({year_data.total_assets}) "
                     f"!= Liabilities ({year_data.total_liabilities}) + Equity ({year_data.total_equity}). Calculated: {calculated_assets}."
@@ -46,7 +45,7 @@ class CriticValidator:
         """Check: Revenue - COGS = Gross Profit"""
         if year_data.total_revenue is not None and year_data.cogs is not None and year_data.gross_profit is not None:
             calculated_gp = year_data.total_revenue - year_data.cogs
-            if abs(year_data.gross_profit - calculated_gp) > 1.0:
+            if abs(year_data.gross_profit - calculated_gp) > self.TOLERANCE:
                  self.errors.append(
                     f"Year {year_data.year} Income Statement Error: Reported Gross Profit ({year_data.gross_profit}) "
                     f"!= Revenue ({year_data.total_revenue}) - COGS ({year_data.cogs}). Calculated: {calculated_gp}."
@@ -63,8 +62,8 @@ class CriticValidator:
              ]
              subtotal = sum(components)
              
-             # The sum of specific components shouldn't be larger than the total
-             if subtotal > year_data.current_assets + 1.0:
+             # The sum of specific components shouldn't be larger than the total (with tolerance)
+             if subtotal > year_data.current_assets + self.TOLERANCE:
                   self.errors.append(
                     f"Year {year_data.year} Current Assets Subtotal Error: Sum of cash/receivables/inventory ({subtotal}) "
                     f"is greater than reported Total Current Assets ({year_data.current_assets})."

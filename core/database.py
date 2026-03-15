@@ -169,7 +169,11 @@ def save_analysis(isin: str, analysis: Dict, lite_mode: bool = False):
     conn = get_connection()
     cursor = conn.cursor()
     
-    rationale_text = f"SUMMARY: {analysis.get('verdict_summary', 'N/A')}\n\nDETAILS: {json.dumps(analysis.get('analysis', {}), indent=2)}"
+    details_payload = {
+        "analysis": analysis.get('analysis', {}),
+        "structural_quality_blind": analysis.get('structural_quality_blind', {})
+    }
+    rationale_text = f"SUMMARY: {analysis.get('verdict_summary', 'N/A')}\n\nDETAILS: {json.dumps(details_payload, indent=2)}"
     
     if lite_mode:
         cursor.execute('''

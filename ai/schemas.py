@@ -37,31 +37,101 @@ class TableExtractionSchema(BaseModel):
     
 class QualitativeForensicsSchema(BaseModel):
     """The root schema for the Narrative Forensic Agent."""
-    business_description: str = Field(description="A concise summary of what the business actually does, how it makes money, and its primary products/services (The 'Peter Lynch Story').")
-    growth_catalysts: Optional[str] = Field(None, description="Mentions of new product launches, major contract wins, regulatory approvals, or capacity expansions that could act as 'Rocket Fuel' for earnings.")
+    # --- Mandatory opener ---
+    company_introduction: str = Field(description="A plain-language paragraph explaining what this company does, who its customers are, and where it sits in its market. No jargon, no hype, no superlatives. Written as if the reader has never heard of the company. One paragraph maximum.")
+    business_description: str = Field(description="A concise summary of what the business actually does, how it makes money, and its primary products/services.")
+
+    # --- Bullish lenses (each paired with a skeptical mirror) ---
+    growth_catalysts: Optional[str] = Field(None, description="Mentions of new product launches, major contract wins, regulatory approvals, or capacity expansions that could sustainably accelerate earnings.")
+    growth_quality_concerns: Optional[str] = Field(None, description="Skeptical mirror: Is this growth durable or pulled forward? Evidence of one-time windfalls, channel stuffing, unsustainable discounting, or customer concentration that inflates the growth narrative.")
+
     structural_moat_evidence: Optional[str] = Field(None, description="Evidence of switching costs, network effects, or cost advantages. Cite specific pages/sections.")
+    moat_fragility_evidence: Optional[str] = Field(None, description="Skeptical mirror: Evidence that the moat is eroding — rising competitive pressure, low barriers to entry, commoditization, or technology disruption. Cite pages.")
+
     intelligent_fanatic_markers: Optional[str] = Field(None, description="Evidence of extreme frugality, quality obsession, or high insider alignment/integrity. Cite pages.")
-    diworsification_red_flags: Optional[str] = Field(None, description="Evidence of unrelated acquisitions subsidized by a profitable core segment.")
-    aggressive_accounting_flags: Optional[str] = Field(None, description="Mentions of percentage-of-completion assumption changes, capitalization of routine costs, or segment shuffling.")
+    management_risk_flags: Optional[str] = Field(None, description="Skeptical mirror: Evidence of empire-building, promotional tone in filings, key-person dependency, excessive executive compensation, or insider selling. Cite pages.")
+
+    # --- Standalone Red Flags (equally weighted, not a footnote) ---
+    red_flags_diworsification: Optional[str] = Field(None, description="Evidence of unrelated acquisitions subsidized by a profitable core segment.")
+    red_flags_accounting: Optional[str] = Field(None, description="Mentions of percentage-of-completion assumption changes, capitalization of routine costs, segment shuffling, or any other aggressive accounting practices.")
+    red_flags_other: Optional[str] = Field(None, description="Any other material red flags not covered above (e.g., regulatory risk, litigation, related-party transactions).")
+
     management_tone: str = Field(description="A concise summary of the management's tone (e.g., 'Promotional and defensive', 'Candid and operationally focused').")
     valuation_commentary: Optional[str] = Field(None, description="Mentions of share buyback authorizations, insider buying, or management's view on the company's intrinsic value.")
 
+class BlindQualitativeExtractionSchema(BaseModel):
+    """The root schema for Phase 1: Blind Extraction."""
+    value_proposition: str = Field(description="Purely qualitative description of the core product/service and the problem it solves. NO NAMES.")
+    revenue_engine: str = Field(description="Mechanism of value capture (subscription, transactional, etc.). NO NUMBERS.")
+    cost_structure: str = Field(description="Fixed vs. variable cost dynamics and capital intensity. NO MARGINS.")
+    customer_dynamics: str = Field(description="Client concentration and behavior. NO EXACT COUNTS.")
+    primary_target_customers: str = Field(description="Detailed profile of the ideal customer (e.g., 'Medium-sized regional banks'). NO NAMES.")
+    industry_context: str = Field(description="The specific industry and market niche (e.g., 'Video Game Developer specializing in RPGs'). DO NOT use the company name.")
+    strategic_maneuvers: str = Field(description="Tactical changes management is making (e.g., 'Increasing salaries to prevent talent drain').")
+    future_catalysts_detailed: str = Field(description="Long-form description of upcoming product launches, market expansions, etc.")
+    distribution_supply: str = Field(description="Supply chain complexity. NO LOCATIONS.")
+    competitive_positioning: str = Field(description="Competitive landscape and perceived differentiation. NO MARKET SHARE %.")
+    management_outlook: str = Field(description="Forward-looking strategic initiatives. NO DATES OR TARGETS.")
+
+class PorterFiveForces(BaseModel):
+    new_entrants: str
+    supplier_power: str
+    buyer_power: str
+    substitutes: str
+    rivalry: str
+
+class SevenPowers(BaseModel):
+    scale_economies: Optional[str]
+    network_economies: Optional[str]
+    switching_costs: Optional[str]
+    counter_positioning: Optional[str]
+    cornered_resource: Optional[str]
+    branding: Optional[str]
+    process_power: Optional[str]
+
+class BlindQualitativeEvaluationSchema(BaseModel):
+    """The root schema for Phase 2: Blind Evaluation."""
+    mechanistic_summary: str = Field(description="How the business creates and captures value.")
+    primary_target_customers: str = Field(description="Detailed profile of the ideal customer (e.g., 'Medium-sized regional banks', 'High-net-worth retail investors').")
+    industry_context: str = Field(description="The specific industry and market niche.")
+    strategic_maneuvers: str = Field(description="Tactical changes management is making.")
+    future_catalysts_detailed: str = Field(description="Long-form description of upcoming catalysts.")
+    porter_analysis: PorterFiveForces
+    seven_powers: SevenPowers
+    moat_rating: str = Field(description="Wide, Narrow, or None.")
+    capital_efficiency: str = Field(description="Assessment of marginal cost for growth.")
+    primary_structural_risks: str = Field(description="The top 3 structural risks that could break the business model.")
+    tactical_conflicts: str = Field(description="Internal contradictions or tensions in the model.")
+    competitive_moat_sustainability: str = Field(description="Detailed analysis of why the moat will or will not last 10 years.")
+    talent_and_culture_risk: str = Field(description="Analysis of 'Brain Drain' or human capital dependency.")
+    structural_tier: int = Field(description="1 (Exceptional), 2 (Defensible but Capital Intensive), 3 (Commoditized/Fragile).")
+    final_verdict: str = Field(description="Crisp final decision on structural quality.")
+
 class FinalAnalysisDetailsSchema(BaseModel):
-    """The detailed sections of the final markdown report."""
+    """The detailed sections of the final markdown report. No investor framework labels (Lynch, O'Neil, etc.) — neutral headings only."""
+    company_introduction: str = Field(description="The plain-language company introduction. No superlatives, no verdict, no framing. Just what the company does and where it sits in its market.")
     forensic_launchpad: str = Field(description="A fluid, highly readable summary of the verified financial data (Revenue, Margins, Debt) highlighting notable trends. Do NOT output raw JSON.")
-    the_story: str = Field(description="The 'Peter Lynch Story': a readable summary of what the business does and how it makes money.")
-    the_gate: str = Field(description="A fluid discussion of the company's structural moats based on the extracted evidence.")
-    rocket_fuel: str = Field(description="A fluid discussion of growth catalysts based on the extracted evidence.")
-    intelligent_fanatics: str = Field(description="A fluid discussion of management alignment, frugality, and obsession with quality.")
-    valuation: str = Field(description="A fluid discussion of valuation commentary, buybacks, or insider buying.")
-    red_flags: str = Field(description="A fluid discussion of any diworsification or aggressive accounting red flags.")
+    competitive_moat: str = Field(description="A balanced discussion of the company's structural moats AND their fragilities, based on the extracted evidence.")
+    growth_catalysts_and_risks: str = Field(description="A balanced discussion of growth catalysts alongside growth quality concerns — is this growth durable or pulled forward?")
+    management_quality: str = Field(description="A balanced discussion of management alignment and quality alongside management risk flags (empire-building, key-person risk, compensation).")
+    valuation: str = Field(description="A fluid discussion of valuation relative to the business quality, including buybacks or insider buying signals.")
+    red_flags: str = Field(description="A standalone, equally-weighted discussion of ALL red flags: diworsification, aggressive accounting, and any other material concerns. This is NOT a footnote.")
+    conviction_scorecard: str = Field(description="A Markdown table showing 5 dimensions scored 1-10: Revenue Growth Quality, Moat Durability, Capital Efficiency, Management Quality, Risk Profile. Include weights (25/25/20/15/15) and the computed weighted average.")
+    bull_bear_disagreements: str = Field(description="Explicit reconciliation of contradictions between the bull case and the Blind Evaluation's bear case. MANDATORY if the Blind Evaluation rated Moat Durability as Narrow or below. Must appear before any investment conclusion.")
     pre_mortem: str = Field(description="The bear case / what could fundamentally go wrong with this thesis.")
 
 class FinalAnalysisOutputSchema(BaseModel):
     """The root schema for the Synthesis Agent."""
-    recommendation: str = Field(description="The final verdict (e.g., 'Strong Buy', 'Watchlist', 'Avoid').")
-    conviction_score: int = Field(description="Conviction score from 1 to 10 based on the strength of the moats and financials.")
+    recommendation: str = Field(description="The final verdict (e.g., 'Strong Buy', 'Watchlist', 'Avoid'). Must follow FROM the scorecard, not precede it.")
+    # --- Five independently scored dimensions (1-10) ---
+    score_revenue_growth_quality: int = Field(description="Revenue Growth Quality score (1-10). Evaluates durability, organic vs. inorganic, and forward trajectory.")
+    score_moat_durability: int = Field(description="Moat Durability score (1-10). Evaluates competitive advantages and their sustainability over 10 years.")
+    score_capital_efficiency: int = Field(description="Capital Efficiency score (1-10). Evaluates ROIC, asset-light scalability, and self-funding capability.")
+    score_management_quality: int = Field(description="Management Quality score (1-10). Evaluates insider alignment, frugality, candor, and track record.")
+    score_risk_profile: int = Field(description="Risk Profile score (1-10, where 10 = lowest risk). Evaluates solvency, accounting quality, regulatory exposure, and concentration risks.")
+    conviction_score: float = Field(description="Weighted average of the five dimension scores. Weights: Revenue Growth Quality 25%, Moat Durability 25%, Capital Efficiency 20%, Management Quality 15%, Risk Profile 15%. MUST be computed, not intuited.")
     is_10_bagger_candidate: bool = Field(description="True if the company has high ROIIC, strong moats, and massive growth potential.")
-    global_thought: str = Field(description="A synthesis of the management's tone, the fundamental reality of the business, and its overall quality.")
-    verdict_summary: str = Field(description="A crisp, 2-3 sentence executive summary of the entire investment thesis.")
+    global_thought: str = Field(description="A synthesis of the fundamental reality of the business, its competitive position, and overall quality.")
+    verdict_summary: str = Field(description="A crisp, 2-3 sentence executive summary of the entire investment thesis. Must follow from the scorecard.")
     analysis: FinalAnalysisDetailsSchema = Field(description="The structured markdown content for the report.")
+    structural_quality_blind: Optional[BlindQualitativeEvaluationSchema] = Field(None, description="The results of the blind qualitative evaluation.")
