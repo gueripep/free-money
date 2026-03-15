@@ -8,6 +8,7 @@ import yfinance as yf
 from typing import Optional, List, Dict
 from ai.gemini_client import GeminiClient
 from ai.agents import TableExtractionAgent, NarrativeForensicAgent, SynthesisAgent
+from ai.score_auditor import ScoreAuditor
 from ai.blind_agents import BlindExtractionAgent, BlindEvaluationAgent
 from ai.critic import CriticValidator
 import core.database as db
@@ -59,7 +60,7 @@ def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysi
             f.write(f"{details.get('valuation_check', 'N/A')}\n\n")
         elif lite_mode:
             # --- Lite mode: simple summary format ---
-            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
+            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/5\n")
             f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
             f.write("## 📖 What Does This Company Actually Do?\n")
             f.write(f"{details.get('company_introduction', 'N/A')}\n\n")
@@ -109,48 +110,12 @@ def generate_markdown_report(company_dir: str, ticker: str, stock: dict, analysi
             f.write("## 10. Pre-Mortem (The Bear Case)\n")
             f.write(f"{details.get('pre_mortem', 'N/A')}\n\n")
             
-            # Section 11: Blind Evaluation (full appendix)
-            if analysis.get('structural_quality_blind'):
-                blind = analysis['structural_quality_blind']
-                f.write("## 11. Structural Quality (Blind Evaluation)\n")
-                f.write(f"> [!NOTE]\n> This analysis was performed by an AI isolated from the company's name and specific financial figures to eliminate halo bias.\n\n")
-                f.write(f"**Structural Tier:** Tier {blind.get('structural_tier', 'N/A')}\n")
-                f.write(f"**Moat Rating:** {blind.get('moat_rating', 'N/A')}\n\n")
 
-                f.write(f"### 🎯 Industry Context\n")
-                f.write(f"{blind.get('industry_context', 'N/A')}\n\n")
-                
-                f.write(f"### ⚙️ The Engine (Mechanistic Summary)\n")
-                f.write(f"{blind.get('mechanistic_summary', 'N/A')}\n\n")
-                
-                if blind.get('primary_target_customers'):
-                    f.write(f"**Ideal Customer Profile:** {blind.get('primary_target_customers')}\n\n")
-                
-                f.write(f"### ⚡ Strategic Maneuvers & Tactical Pivots\n")
-                f.write(f"{blind.get('strategic_maneuvers', 'N/A')}\n\n")
-                
-                f.write(f"### 🛡️ Competitive Sustainability & Moat Durability\n")
-                f.write(f"{blind.get('competitive_moat_sustainability', 'N/A')}\n\n")
-                
-                f.write(f"### 🧠 Talent, Culture & 'Brain Drain' Risk\n")
-                f.write(f"{blind.get('talent_and_culture_risk', 'N/A')}\n\n")
-                
-                f.write(f"### 🧨 Tactical Conflicts (Strategic Tensions)\n")
-                f.write(f"> {blind.get('tactical_conflicts', 'N/A')}\n\n")
-                
-                f.write(f"### 🚀 Future Catalysts (Delayed Rocket Fuel)\n")
-                f.write(f"{blind.get('future_catalysts_detailed', 'N/A')}\n\n")
-                
-                f.write(f"### ⚠️ Primary Structural Risks\n")
-                f.write(f"{blind.get('primary_structural_risks', 'N/A')}\n\n")
-                
-                f.write(f"### 🏁 Final Quality Verdict\n")
-                f.write(f"**{blind.get('final_verdict', 'N/A')}**\n\n")
             
             # --- VERDICT (appears LAST, derived from the scorecard above) ---
             f.write("---\n\n")
             f.write("## Investment Conclusion\n\n")
-            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/10\n")
+            f.write(f"**Conviction Score:** {analysis.get('conviction_score', 'N/A')}/5\n")
             f.write(f"**10-Bagger Candidate:** {'YES' if analysis.get('is_10_bagger_candidate') else 'NO'}\n")
             f.write(f"**Verdict:** {analysis.get('recommendation', 'N/A')}\n\n")
             f.write(f"{analysis.get('verdict_summary', 'N/A')}\n\n")
@@ -307,6 +272,10 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
                 table_agent = TableExtractionAgent(ai_client)
                 table_data = table_agent.extract(stock['name'], gemini_file=gemini_file, cached_content=cached_content)
                 
+                if not table_data:
+                    logger.error(f"Pipeline Halted: Table Extraction returned None for {ticker}.")
+                    return
+
                 # 4. Critic Validation
                 critic = CriticValidator()
                 is_valid, errors = critic.validate(table_data)
@@ -332,6 +301,40 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
                 # 7. Synthesis Agent (Final Formatting - No PDF needed here)
                 synthesis_agent = SynthesisAgent(ai_client)
                 final_report = synthesis_agent.synthesize(stock['name'], table_data, narrative_data, blind_evaluation_data, stock)
+                
+                # 8. Score Auditor (Devil's Advocate calibration)
+                if final_report:
+                    logger.info(f"Initiating Score Audit for {ticker}...")
+                    auditor = ScoreAuditor(ai_client)
+                    audit_results = auditor.audit(stock['name'], final_report)
+                    
+                    if audit_results and audit_results.any_overrides:
+                        logger.warning(f"Auditor Adjusted Scores for {ticker}: {audit_results.adjustments_made}")
+                        final_report.score_revenue_growth_quality = audit_results.score_revenue_growth_quality
+                        final_report.score_moat_durability = audit_results.score_moat_durability
+                        final_report.score_capital_efficiency = audit_results.score_capital_efficiency
+                        final_report.score_management_quality = audit_results.score_management_quality
+                        final_report.score_risk_profile = audit_results.score_risk_profile
+                        
+                        # Regenerate the scorecard table for consistency in the report
+                        new_table = "| Dimension | Score | Weight | Weighted Score |\n| :--- | :--- | :--- | :--- |\n"
+                        new_table += f"| Revenue Growth Quality | {audit_results.score_revenue_growth_quality} | 25% | {round(audit_results.score_revenue_growth_quality * 0.25, 2)} |\n"
+                        new_table += f"| Moat Durability | {audit_results.score_moat_durability} | 25% | {round(audit_results.score_moat_durability * 0.25, 2)} |\n"
+                        new_table += f"| Capital Efficiency | {audit_results.score_capital_efficiency} | 20% | {round(audit_results.score_capital_efficiency * 0.20, 2)} |\n"
+                        new_table += f"| Management Quality | {audit_results.score_management_quality} | 15% | {round(audit_results.score_management_quality * 0.15, 2)} |\n"
+                        new_table += f"| Risk Profile | {audit_results.score_risk_profile} | 15% | {round(audit_results.score_risk_profile * 0.15, 2)} |\n"
+                        computed_conviction = round(
+                            0.25 * audit_results.score_revenue_growth_quality +
+                            0.25 * audit_results.score_moat_durability +
+                            0.20 * audit_results.score_capital_efficiency +
+                            0.15 * audit_results.score_management_quality +
+                            0.15 * audit_results.score_risk_profile,
+                            2
+                        )
+                        new_table += f"| **Final Conviction Score** | | **100%** | **{computed_conviction}** |\n"
+                        final_report.analysis.conviction_scorecard = new_table
+                    else:
+                        logger.info(f"Audit Complete for {ticker}: No overrides needed.")
             
             finally:
                 # 7. Cleanup! This is critical to avoid paying for hanging cache storage
@@ -382,6 +385,10 @@ def process_target_stock(ticker: str, lite_mode: bool = False, custom_question: 
         if not quarterly_mode:
             db.save_analysis(stock['isin'], analysis, lite_mode=lite_mode)
         print(f"Success! Analysis complete for {ticker} ({mode_name}).")
+        
+        # Log total usage report at the end
+        logger.info(ai_client.get_usage_report())
+        print(ai_client.get_usage_report())
     else:
         logger.error(f"Analysis failed for {ticker}")
 

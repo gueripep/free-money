@@ -123,10 +123,10 @@ class SynthesisAgent:
         if moat_is_weak and blind_evaluation_data:
             reconciliation_directive = f"""
         **HARD RECONCILIATION RULE (MANDATORY):**
-        The Blind Evaluation Agent rated Moat Durability as '{blind_moat_rating}'.
+        The qualitative evaluation rated Moat Durability as '{blind_moat_rating}'.
         You MUST explicitly address this contradiction in the 'bull_bear_disagreements' section BEFORE issuing any verdict.
-        This section cannot be empty or dismissive. Explain concretely why you agree or disagree with the blind assessment,
-        citing specific evidence from both the Narrative Agent and the Blind Evaluation.
+        This section cannot be empty or dismissive. Explain concretely why you agree or disagree with this assessment,
+        citing specific evidence from both the bullish and bearish perspectives.
         The 'bull_bear_disagreements' section MUST appear before the pre-mortem and before any investment conclusion.
         """
         
@@ -138,8 +138,21 @@ class SynthesisAgent:
         
         **CRITICAL RULES:**
         - NO INVESTOR FRAMEWORK LABELS: Do NOT mention Lynch, O'Neil, Phelps, Cassel, or any named investor framework in the output. These are internal analysis tools only. Use neutral, descriptive section headings.
+        - INTEGRATE BLIND EVALUATION: The Blind Evaluation output is source material only. Its findings must be integrated into the relevant sections of the report. It must never appear as a standalone section or be referenced by name. The reader should have no awareness that a separate evaluation pass occurred.
         - NO SUPERLATIVES IN THE OPENING: The document opens with the Company Introduction — a factual description of what the company does, who it serves, and where it sits in its market. No verdict, no framing, no opinion.
         - THE VERDICT FOLLOWS THE SCORECARD: You must score the five dimensions FIRST. The conviction score and recommendation are DERIVED from those scores, not intuited. Do not form an opinion and then reverse-engineer justifications.
+        
+        **ANTI-INFLATION DIRECTIVE:**
+        You are known to systematically inflate scores toward 4/5. This is a documented psychometric bias in AI evaluators. You MUST actively resist this tendency.
+        - A score of 5 should be RARE — reserved for truly exceptional, best-in-class evidence.
+        - A score of 3 is the TRUE CENTER — it represents a 'decent but unremarkable' company.
+        - Scores of 1 and 2 MUST be used when evidence warrants it. Do NOT soften bad findings.
+        - If your initial scores average above 3.5, re-examine your rationale for inflation.
+
+        **SCORING EXAMPLES (Calibration):**
+        1. Low-Score (1-2): A company with declining revenue, no moat, and heavy debt → Score 1 for Growth and Risk.
+        2. Mid-Score (3): Moderate growth but customer concentration risk or high capital intensity → Score 3.
+        3. High-Score (5): Exceptional, durable organic growth, widening moat, and net cash position → Score 5.
         
         COMPANY: {company_name}
         
@@ -163,7 +176,7 @@ class SynthesisAgent:
         
         2. **Forensic Launchpad** ('forensic_launchpad'): Summarize the revenue and margin trends from the Table Agent data. Use prose, not raw JSON. Highlight inflection points and red-flag trends.
         
-        3. **Competitive Moat** ('competitive_moat'): Write a BALANCED discussion. Present the moat evidence from the Narrative Agent AND the moat fragility evidence side by side. Reference the Blind Evaluation's moat assessment.
+        3. **Competitive Moat** ('competitive_moat'): Write a BALANCED discussion. Present the moat evidence from the Narrative Agent AND the moat fragility evidence side by side. Integrate the AI's moat assessment without referencing the agent or evaluation by name.
         
         4. **Growth Catalysts & Risks** ('growth_catalysts_and_risks'): Present the growth catalysts AND the growth quality concerns from the Narrative Agent. Is the growth durable or artificially inflated?
         
@@ -174,18 +187,19 @@ class SynthesisAgent:
         7. **Red Flags** ('red_flags'): This is a STANDALONE, EQUALLY-WEIGHTED section. Combine all red flags (diworsification, accounting, other) from the Narrative Agent into a comprehensive discussion. Do NOT minimize or footnote these.
         
         8. **Conviction Scorecard** ('conviction_scorecard'): 
-           Score each dimension independently on a 1-10 scale based ONLY on the evidence presented above:
+           You MUST populate `scoring_rationale` FIRST — listing all weaknesses, then all strengths — BEFORE setting any score fields.
+           Score each dimension independently on a 1-5 scale based ONLY on the evidence and the behavioral anchors defined in the schema:
            - Revenue Growth Quality (weight: 25%)
            - Moat Durability (weight: 25%)
            - Capital Efficiency (weight: 20%)
            - Management Quality (weight: 15%)
-           - Risk Profile (weight: 15%, where 10 = lowest risk)
+           - Risk Profile (weight: 15%, where 5 = lowest risk)
            Present as a Markdown table with columns: Dimension | Score | Weight | Weighted Score.
            Include the final weighted average at the bottom.
            **These five scores must also be output in the schema fields**: score_revenue_growth_quality, score_moat_durability, score_capital_efficiency, score_management_quality, score_risk_profile.
            **The conviction_score field must equal the weighted average** (= 0.25*Growth + 0.25*Moat + 0.20*Efficiency + 0.15*Management + 0.15*Risk).
         
-        9. **Where the Bull and Bear Cases Disagree** ('bull_bear_disagreements'): Explicitly reconcile contradictions between the Narrative Agent's bullish findings and the Blind Evaluation's skeptical assessment. If the Blind Evaluation rated moat as Narrow or None, this section is MANDATORY and must be substantive.
+        9. **Where the Bull and Bear Cases Disagree** ('bull_bear_disagreements'): Just state "the bull and bear cases disagree on X" without explaining why there are two cases in the first place or referencing the evaluation. If the skeptical moat rating was Narrow or None, this section is MANDATORY and must be substantive but fully integrated as natural analysis.
         
         10. **Pre-Mortem** ('pre_mortem'): The bear case — what could fundamentally break this thesis.
         

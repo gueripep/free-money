@@ -117,19 +117,73 @@ class FinalAnalysisDetailsSchema(BaseModel):
     valuation: str = Field(description="A fluid discussion of valuation relative to the business quality, including buybacks or insider buying signals.")
     red_flags: str = Field(description="A standalone, equally-weighted discussion of ALL red flags: diworsification, aggressive accounting, and any other material concerns. This is NOT a footnote.")
     conviction_scorecard: str = Field(description="A Markdown table showing 5 dimensions scored 1-10: Revenue Growth Quality, Moat Durability, Capital Efficiency, Management Quality, Risk Profile. Include weights (25/25/20/15/15) and the computed weighted average.")
-    bull_bear_disagreements: str = Field(description="Explicit reconciliation of contradictions between the bull case and the Blind Evaluation's bear case. MANDATORY if the Blind Evaluation rated Moat Durability as Narrow or below. Must appear before any investment conclusion.")
+    bull_bear_disagreements: str = Field(description="Explicit reconciliation of contradictions between the bull case and the skeptical case. Do not reference agents or evaluations by name. MANDATORY if the evaluation rated Moat Durability as Narrow or below. Must appear before any investment conclusion.")
     pre_mortem: str = Field(description="The bear case / what could fundamentally go wrong with this thesis.")
 
 class FinalAnalysisOutputSchema(BaseModel):
     """The root schema for the Synthesis Agent."""
     recommendation: str = Field(description="The final verdict (e.g., 'Strong Buy', 'Watchlist', 'Avoid'). Must follow FROM the scorecard, not precede it.")
-    # --- Five independently scored dimensions (1-10) ---
-    score_revenue_growth_quality: int = Field(description="Revenue Growth Quality score (1-10). Evaluates durability, organic vs. inorganic, and forward trajectory.")
-    score_moat_durability: int = Field(description="Moat Durability score (1-10). Evaluates competitive advantages and their sustainability over 10 years.")
-    score_capital_efficiency: int = Field(description="Capital Efficiency score (1-10). Evaluates ROIC, asset-light scalability, and self-funding capability.")
-    score_management_quality: int = Field(description="Management Quality score (1-10). Evaluates insider alignment, frugality, candor, and track record.")
-    score_risk_profile: int = Field(description="Risk Profile score (1-10, where 10 = lowest risk). Evaluates solvency, accounting quality, regulatory exposure, and concentration risks.")
-    conviction_score: float = Field(description="Weighted average of the five dimension scores. Weights: Revenue Growth Quality 25%, Moat Durability 25%, Capital Efficiency 20%, Management Quality 15%, Risk Profile 15%. MUST be computed, not intuited.")
+    
+    scoring_rationale: str = Field(
+        description=(
+            "MANDATORY: Before computing any scores, enumerate every flaw, risk, "
+            "and weakness found in the evidence. Then enumerate every strength. "
+            "This reasoning MUST be written BEFORE the scores are determined."
+        )
+    )
+
+    # --- Five independently scored dimensions (1-5) ---
+    score_revenue_growth_quality: int = Field(
+        description=(
+            "Revenue Growth Quality (1-5). "
+            "1: Revenue declining or flat with no credible growth catalyst. "
+            "2: Low single-digit growth, heavily dependent on one-time or inorganic drivers. "
+            "3: Moderate organic growth (5-15%) but limited evidence of durability or TAM expansion. "
+            "4: Strong, durable organic growth (15%+) with clear catalysts and reasonable visibility. "
+            "5: Exceptional, multi-year organic growth (25%+) with widening TAM and structural tailwinds."
+        )
+    )
+    score_moat_durability: int = Field(
+        description=(
+            "Moat Durability (1-5). "
+            "1: No discernible moat; highly commoditized business with low switching costs. "
+            "2: Weak/Narrow moat; some branding or niche focus but easily disrupted. "
+            "3: Respectable moat; clear differentiation or cost advantage but facing active competition. "
+            "4: Strong moat; high switching costs, network effects, or unique scale efficiencies. "
+            "5: Fortress moat; dominant market position with multi-decade structural protection (Helmer's 7 Powers)."
+        )
+    )
+    score_capital_efficiency: int = Field(
+        description=(
+            "Capital Efficiency (1-5). "
+            "1: Value destructive; ROIC < WACC and consistently burning cash. "
+            "2: Marginal; ROIC roughly equals WACC, requires heavy CapEx to sustain growth. "
+            "3: Solid; Self-funding operations with ROIC > 15%. "
+            "4: High; Asset-light scalability with ROIC > 25% and strong FCF generation. "
+            "5: Elite; Infinite-buffer scalability with ROIC > 50% and exceptional unit economics."
+        )
+    )
+    score_management_quality: int = Field(
+        description=(
+            "Management Quality (1-5). "
+            "1: Misaligned/Promotional; aggressive compensation, low insider ownership, vague strategy. "
+            "2: Average; capable but unremarkable; standard compensation and conventional strategy. "
+            "3: Competent; clear track record, honest communication, and decent alignment. "
+            "4: High; Intelligent Fanatic markers; owner-operator mindset and extreme operational focus. "
+            "5: Visionary/Steward; Exceptional capital allocation history, high insider ownership (>10%), and radical candor."
+        )
+    )
+    score_risk_profile: int = Field(
+        description=(
+            "Risk Profile (1-5, where 5 = lowest risk). "
+            "1: Catastrophic Risk; terminal debt, regulatory investigation, or failing business model. "
+            "2: High Risk; high leverage, intense competition, or aggressive accounting markers. "
+            "3: Moderate Risk; standard cyclical or operational risks, manageable debt levels. "
+            "4: Low Risk; clean balance sheet, diverse customer base, and clear regulatory path. "
+            "5: Antifragile; net cash position, essential service status, and robust margins."
+        )
+    )
+    conviction_score: float = Field(description="Weighted average of the five dimension scores (1-5). Weights: Revenue Growth Quality 25%, Moat Durability 25%, Capital Efficiency 20%, Management Quality 15%, Risk Profile 15%. MUST be computed, not intuited.")
     is_10_bagger_candidate: bool = Field(description="True if the company has high ROIIC, strong moats, and massive growth potential.")
     global_thought: str = Field(description="A synthesis of the fundamental reality of the business, its competitive position, and overall quality.")
     verdict_summary: str = Field(description="A crisp, 2-3 sentence executive summary of the entire investment thesis. Must follow from the scorecard.")

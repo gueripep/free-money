@@ -21,6 +21,11 @@ class GeminiClient:
             logger.error("GEMINI_API_KEY not found. Please provide it in the UI or environment.")
         
         self.blacklist_file = os.path.join(DATA_DIR, "model_blacklist.json")
+        self.total_usage = {
+            "prompt_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 0
+        }
 
     def _is_model_blacklisted(self, model_name: str) -> bool:
         if not os.path.exists(self.blacklist_file):
@@ -50,6 +55,36 @@ class GeminiClient:
             logger.warning(f"Blacklisted model {model_name} for today ({today}).")
         except Exception as e:
             logger.error(f"Error writing blacklist: {e}")
+
+    def _update_usage(self, response):
+        """Accumulates token usage from a response."""
+        meta = response.usage_metadata
+        if meta:
+            self.total_usage["prompt_tokens"] += meta.prompt_token_count or 0
+            self.total_usage["cached_tokens"] += meta.cached_content_token_count or 0
+            self.total_usage["output_tokens"] += meta.candidates_token_count or 0
+
+    def get_usage_report(self) -> str:
+        """Returns a formatted report of total token usage and estimated cost."""
+        prompt = self.total_usage["prompt_tokens"]
+        cached = self.total_usage["cached_tokens"]
+        output = self.total_usage["output_tokens"]
+        
+        # Estimated costs for gemini-3-flash-preview (using typical pricing)
+        # $0.10 / 1M tokens input (<128k) -> $0.0001 / 1k tokens
+        # $0.025 / 1M tokens cached -> $0.000025 / 1k tokens
+        # $0.40 / 1M tokens output -> $0.0004 / 1k tokens
+        cost = (prompt * 0.10 / 1_000_000) + (cached * 0.025 / 1_000_000) + (output * 0.40 / 1_000_000)
+        
+        report = f"""
+--- TOTAL TOKEN USAGE REPORT ---
+Prompt Tokens:  {prompt:,}
+Cached Tokens:  {cached:,}
+Output Tokens:  {output:,}
+Estimated Cost: ${cost:.4f}
+-------------------------------
+"""
+        return report
 
     def create_cached_content(self, model_name: str, file_uri: str, mime_type: str, display_name: str, ttl_minutes: int = 15) -> Optional[Any]:
         """Creates a cached content object for an uploaded file."""
@@ -82,63 +117,57 @@ class GeminiClient:
             logger.error(f"Failed to create cached content: {e}")
             return None
 
+
     def generate_structured_content(self, prompt: List[any], response_schema: Type[BaseModel], cached_content=None) -> Optional[BaseModel]:
-        """Generates content guaranteed to conform to a specific Pydantic schema."""
-        # If cached_content is provided, it dictates the model name natively
-        # we must use the model the cache was created with.
+        """Generates content guaranteed to conform to a specific Pydantic schema with logprob calibration."""
         models_to_try = GEMINI_MODELS
         if cached_content:
-            # The cache object has a 'model' attribute like 'models/gemini-1.5-pro-002'
             models_to_try = [cached_content.model]
 
         for model_name in models_to_try:
-            if not cached_content and self._is_model_blacklisted(model_name):
-                continue
-
             try:
+                if not cached_content and self._is_model_blacklisted(model_name):
+                    logger.warning(f"Skipping blacklisted model {model_name}.")
+                    continue
+
                 if not self.client:
                     logger.error("Gemini client not initialized.")
                     return None
                 
-                if cached_content:
-                    # When using a cache, contents must only contain the user prompt, not the file again
+                try:
+                    config = types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=response_schema
+                    )
+                    
+                    if cached_content:
+                        config.cached_content = cached_content.name
+                    
                     response = self.client.models.generate_content(
                        model=model_name,
                        contents=prompt,
-                       config=types.GenerateContentConfig(
-                           response_mime_type="application/json",
-                           response_schema=response_schema,
-                           cached_content=cached_content.name
-                       )
+                       config=config
                     )
-                else:
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=response_schema
-                        )
-                    )
+                except Exception as e:
+                    raise e
                 
-                # Log usage metadata for transparency
+                # Log usage metadata
+                self._update_usage(response)
                 meta = response.usage_metadata
                 logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
 
-                # The response.text should be valid JSON conforming to the schema
                 text = response.text.strip()
                 if text.startswith("```json"):
                     text = text.replace("```json", "", 1).replace("```", "", 1).strip()
                 
                 parsed_data = json.loads(text)
-                return response_schema(**parsed_data) # Validate via Pydantic
+                return response_schema(**parsed_data)
                 
             except Exception as e:
                 logger.error(f"Structured analysis failed with {model_name}: {e}")
                 if not cached_content:
                     self._blacklist_model(model_name)
                 else:
-                    # If it's a cache-tied model and it fails, we can't really fallback easily
                     break
         
         return None
@@ -204,6 +233,7 @@ class GeminiClient:
                 )
                 
                 # Log usage metadata
+                self._update_usage(response)
                 meta = response.usage_metadata
                 logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
 
@@ -265,6 +295,7 @@ class GeminiClient:
                 )
                 
                 # Log usage metadata
+                self._update_usage(response)
                 meta = response.usage_metadata
                 logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
 
@@ -304,6 +335,7 @@ class GeminiClient:
                     )
                     
                     # Log usage metadata
+                    self._update_usage(response)
                     meta = response.usage_metadata
                     logger.info(f"[{model_name}] Usage: Prompt={meta.prompt_token_count}, Cached={meta.cached_content_token_count or 0}, Output={meta.candidates_token_count}")
 

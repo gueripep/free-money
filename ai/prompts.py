@@ -51,7 +51,12 @@ If the company is flagged as a 'HEAVY ACQUIRER', you MUST address the risk of ro
 OUTPUT FORMAT (JSON ONLY):
 {{
     "recommendation": "Buy / Watch / Avoid",
-    "conviction_score": (1-10, be objective, reward strong metrics),
+    "conviction_score": (1-5 scale. 1: Poor, 3: Average, 5: Exceptional. Use the anchors below),
+    "conviction_anchors": {{
+        "1": "High risk, poor metrics, or declining business.",
+        "3": "Solid business with fair valuation and standard catalysts.",
+        "5": "Exceptional compounder with deep moat and massive upside."
+    }},
     "is_10_bagger_candidate": true/false,
     "verdict_summary": "A punchy, 2-sentence final takeaway. Are they legitimately a great business or just a speculative flash in the pan?",
     "analysis": {{
@@ -158,7 +163,7 @@ OUTPUT FORMAT INSTRUCTIONS (JSON ONLY):
 JSON STRUCTURE:
 {{
     "recommendation": "Buy / Watch / Avoid",
-    "conviction_score": (1-10, be objective, reward strong evidence),
+    "conviction_score": (1-5 scale. 1: High Risk/Value Destructive, 3: Solid/Self-Funding, 5: Elite Compounder. Use the behavioral anchors in the system rubric),
     "is_10_bagger_candidate": true/false,
     "global_thought": "Synthesize the overarching business reality, industry ecosystem, and macroeconomic context. Identify the main structural barrier, but maintain an objective stance based on the evidence.",
     "analysis": {{

@@ -24,11 +24,22 @@ for d in [DATA_DIR, REPORTS_DIR, COMPANIES_DIR, LOGS_DIR]:
 
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODELS = [
-    "models/gemini-3-flash-preview",
-    "models/gemini-3.1-pro-preview",
-    "models/gemini-2.5-pro"
-]
+
+# Model configuration with fallback
+DEFAULT_MODEL = "models/gemini-3-flash-preview"
+env_models = os.getenv("GEMINI_MODELS", "")
+if env_models:
+    GEMINI_MODELS = [m.strip() for m in env_models.split(",") if m.strip()]
+    # Ensure DEFAULT_MODEL is always in the list and at the end as ultimate fallback
+    if DEFAULT_MODEL in GEMINI_MODELS:
+        GEMINI_MODELS.remove(DEFAULT_MODEL)
+    GEMINI_MODELS.append(DEFAULT_MODEL)
+else:
+    GEMINI_MODELS = [
+        DEFAULT_MODEL,
+        "models/gemini-3.1-pro-preview",
+        "models/gemini-2.5-pro"
+    ]
 
 # Logging setup
 def setup_logging(name: str) -> logging.Logger:
