@@ -62,6 +62,7 @@ def init_db():
             acquirer_type TEXT,
             tier TEXT,
             review_date TEXT,
+            currency TEXT,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -92,7 +93,8 @@ def init_db():
         ("shares_outstanding_cagr", "REAL"),
         ("acquirer_type", "TEXT"),
         ("tier", "TEXT"),
-        ("review_date", "TEXT")
+        ("review_date", "TEXT"),
+        ("currency", "TEXT")
     ]
     
     for col_name, col_type in new_columns:

@@ -15,6 +15,44 @@ LOCK_FILE = os.path.join(DATA_DIR, ".ingestion.lock")
 
 logger = setup_logging("02_fetch_financials")
 
+# Global cache for exchange rates to avoid redundant API calls
+EXCHANGE_RATES = {"USD": 1.0}
+
+def get_exchange_rate(source_currency: str) -> float:
+    """Fetches the exchange rate from source_currency to USD."""
+    if not source_currency or source_currency == "DATA NOT FOUND":
+        return 1.0
+        
+    source_currency = source_currency.upper()
+    if source_currency in EXCHANGE_RATES:
+        return EXCHANGE_RATES[source_currency]
+        
+    try:
+        # yfinance uses symbols like 'USDJPY=X' for rates (usually reverse for our needs)
+        # We want Source -> USD. Most pairs are XXXUSD=X or USDXXX=X
+        ticker_symbol = f"{source_currency}USD=X"
+        rate_ticker = yf.Ticker(ticker_symbol)
+        
+        # Try primary pair
+        rate = rate_ticker.info.get('regularMarketPrice')
+        
+        # Fallback: Try reverse pair if primary fails
+        if rate is None:
+            reverse_ticker_symbol = f"USD{source_currency}=X"
+            reverse_rate_ticker = yf.Ticker(reverse_ticker_symbol)
+            reverse_rate = reverse_rate_ticker.info.get('regularMarketPrice')
+            if reverse_rate and reverse_rate > 0:
+                rate = 1.0 / reverse_rate
+        
+        if rate:
+            EXCHANGE_RATES[source_currency] = rate
+            logger.info(f"Exchange Rate Cached: 1 {source_currency} = {rate:.4f} USD")
+            return rate
+    except Exception as e:
+        logger.warning(f"Could not fetch exchange rate for {source_currency}: {e}")
+        
+    return 1.0 # Fallback to 1.0 to avoid crashing, but log as warning
+
 # Helper to get financial metrics
 
 def safe_float(val, default=0.0):
@@ -58,7 +96,9 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
             'proxy_wacc': 0.10, # Default
             'inorganic_growth_ratio': 0.0,
             'is_acquirer': False,
-            'shares_outstanding_cagr': 0.0 # Initialize
+            'shares_outstanding_cagr': 0.0, # Initialize
+            'currency': info.get('currency', 'USD'),
+            'name': info.get('longName') or info.get('shortName') or info.get('name')
         }
 
         # Extracted metrics matching Launchpad criteria
@@ -82,6 +122,21 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
             val = info.get(info_key)
             if val is not None:
                 metrics[m_key] = val
+        
+        # --- Currency Normalization ---
+        source_currency = metrics.get('currency', 'USD')
+        if source_currency != "USD":
+            rate = get_exchange_rate(source_currency)
+            if rate != 1.0:
+                logger.info(f"Normalizing {ticker_name} metrics from {source_currency} to USD (Rate: {rate:.4f})")
+                monetary_fields = [
+                    'market_cap', 'total_debt', 'free_cashflow', 
+                    'enterprise_value', 'ebitda', 'operating_cash_flow'
+                ]
+                for field in monetary_fields:
+                    val = metrics.get(field)
+                    if isinstance(val, (int, float)):
+                        metrics[field] = val * rate
         
         # Calculate Advanced Calculus of Outperformance Metrics
         try:
@@ -179,16 +234,23 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
                 metrics['accruals_ratio'] = (net_income - ocf) / total_assets
 
             # --- Cash Runway Months ---
+            metrics['cash_runway_months'] = "DATA NOT FOUND"
             if not cashflow.empty and not balance_sheet.empty:
-                cash = safe_float(balance_sheet.loc['Cash And Cash Equivalents'].iloc[0]) if 'Cash And Cash Equivalents' in balance_sheet.index else 0
-                ocf = safe_float(cashflow.loc['Operating Cash Flow'].iloc[0]) if 'Operating Cash Flow' in cashflow.index else 0
-                capex = safe_float(cashflow.loc['Capital Expenditure'].iloc[0]) if 'Capital Expenditure' in cashflow.index else 0
-                
-                burn_rate = ocf + capex # Usually capex is negative in CF statement
-                if burn_rate < 0:
-                    metrics['cash_runway_months'] = (cash / abs(burn_rate)) * 12
-                else:
-                    metrics['cash_runway_months'] = 999 # Technically infinite if generating cash
+                # Check for explicit presence in index to avoid defaulting to 0 for missing data
+                if 'Operating Cash Flow' in cashflow.index and 'Cash And Cash Equivalents' in balance_sheet.index:
+                    cash = safe_float(balance_sheet.loc['Cash And Cash Equivalents'].iloc[0])
+                    ocf = safe_float(cashflow.loc['Operating Cash Flow'].iloc[0])
+                    capex = safe_float(cashflow.loc['Capital Expenditure'].iloc[0]) if 'Capital Expenditure' in cashflow.index else 0
+                    
+                    burn_rate = ocf + capex 
+                    if burn_rate < 0:
+                        if cash > 0:
+                            metrics['cash_runway_months'] = (cash / abs(burn_rate)) * 12
+                        else:
+                            metrics['cash_runway_months'] = 0.0
+                    elif burn_rate > 0 or (ocf != 0 or capex != 0):
+                        # If we have actual non-zero data and burn is positive/zero, it's infinite
+                        metrics['cash_runway_months'] = 999.0
 
             # --- ROIC and ROIIC Metrics ---
             # Approximating Invested Capital = Total Assets - Current Liabilities + Short Term Debt (if any)
@@ -226,68 +288,94 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
                 if len(roic_hist) >= 2:
                     metrics['roic_decay_rate'] = (roic_hist[0] - roic_hist[1]) / abs(roic_hist[1]) if roic_hist[1] != 0 else 0
 
-            # --- Inorganic Growth Detection (M&A) ---
+            # --- Inorganic Growth Detection (M&A) - Signal Triangulation ---
             inorganic_ratio = 0.0
-            is_acquirer = False
+            signals = []
             
-            # Sub-check 1: Current Cash Flow Outflows (TTM)
-            if not cashflow.empty:
-                ocf = safe_float(cashflow.loc['Operating Cash Flow'].iloc[0]) if 'Operating Cash Flow' in cashflow.index else 0.0
-                purchase_of_business = safe_float(cashflow.loc['Purchase Of Business'].iloc[0]) if 'Purchase Of Business' in cashflow.index else 0.0
+            # 1. Denominator Strategy: 3-Year Average OCF (smoothes out "low cash years")
+            ocf_history = []
+            if not cashflow.empty and 'Operating Cash Flow' in cashflow.index:
+                ocf_history = [safe_float(v) for v in cashflow.loc['Operating Cash Flow'].dropna()[:3]]
+            
+            avg_ocf = sum(ocf_history) / len(ocf_history) if ocf_history else 0.0
+            
+            if avg_ocf > 0:
+                # 2. High Confidence Signals (Explicit M&A Labels)
+                high_conf_keys = ['Purchase Of Business', 'Net Business Purchase And Sale']
+                max_high_conf = 0.0
+                for ok in high_conf_keys:
+                    if ok in cashflow.index:
+                        # Sum up to 2 years of outflows (M&A is often lumpy)
+                        val = sum([abs(safe_float(v)) for v in cashflow.loc[ok].dropna()[:2] if safe_float(v) < 0])
+                        max_high_conf = max(max_high_conf, val)
                 
-                if ocf > 0:
-                    if purchase_of_business < 0:
-                        # Explicit Purchase Of Business line exists
-                        inorganic_ratio_cf = abs(purchase_of_business) / ocf
-                        inorganic_ratio += inorganic_ratio_cf
-                    else:
-                        # Fallback: Unexplained Investing Cash Flow
-                        inv_cf = safe_float(cashflow.loc['Investing Cash Flow'].iloc[0]) if 'Investing Cash Flow' in cashflow.index else 0.0
-                        capex = safe_float(cashflow.loc['Capital Expenditure'].iloc[0]) if 'Capital Expenditure' in cashflow.index else 0.0
-                        if inv_cf < 0:
-                            unexplained_investing = abs(inv_cf) - abs(capex)
-                            if unexplained_investing > 0:
-                                inorganic_ratio_cf = unexplained_investing / ocf
-                                inorganic_ratio += inorganic_ratio_cf
+                if max_high_conf > 0:
+                    signals.append(max_high_conf / avg_ocf)
 
-            # Sub-check 2: YoY Goodwill/Intangibles Jump (Balance Sheet) -> Catches Base Effect & missing categorizations
-            if not balance_sheet.empty:
-                total_assets = safe_float(balance_sheet.loc['Total Assets'].iloc[0]) if 'Total Assets' in balance_sheet.index else 1.0
-                
-                # Waterfall through possible naming conventions
-                gw_keys = ['Goodwill', 'Goodwill And Other Intangible Assets', 'Other Intangible Assets']
-                for key in gw_keys:
-                    if key in balance_sheet.index and len(balance_sheet.loc[key]) >= 2:
-                        current_gw = safe_float(balance_sheet.loc[key].iloc[0])
-                        prev_gw = safe_float(balance_sheet.loc[key].iloc[1])
-                        if current_gw > prev_gw and current_gw > 0:
-                            delta_gw = current_gw - prev_gw
-                            inorganic_ratio_gw = delta_gw / total_assets
-                            inorganic_ratio += inorganic_ratio_gw * 2  # Weight structural jumps heavily
-                            break # Found a match, stop looking further down the waterfall
+                # 3. Structural Signal: Balance Sheet Goodwill/Intangibles Jump
+                # This is the "Ground Truth" for M&A. Treasury moves don't create Goodwill.
+                if not balance_sheet.empty:
+                    total_assets = safe_float(balance_sheet.loc['Total Assets'].iloc[0]) if 'Total Assets' in balance_sheet.index else 1.0
+                    gw_keys = ['Goodwill', 'Goodwill And Other Intangible Assets', 'Other Intangible Assets']
+                    max_delta_gw = 0.0
+                    for key in gw_keys:
+                        if key in balance_sheet.index:
+                            history = [safe_float(v) for v in balance_sheet.loc[key].dropna()[:3]]
+                            if len(history) >= 2:
+                                # Maximum jump between any two adjacent years in last 3
+                                jumps = [history[i] - history[i+1] for i in range(len(history)-1)]
+                                max_delta_gw = max(max_delta_gw, max(jumps) if jumps else 0)
+                        if max_delta_gw > 0: break
+                    
+                    if max_delta_gw > 0:
+                        # Structural Inorganic Ratio (normalized to assets, then scaled to OCF for composite)
+                        struct_ratio = max_delta_gw / total_assets
+                        # We count a structural jump as a high-confidence signal
+                        signals.append(struct_ratio * 4) # Weight structural jumps heavily
+
+                # 4. Low Confidence/Noisy Fallback: Net Investment
+                if not signals: # Only use if we found nothing better
+                    if 'Net Investment Purchase And Sale' in cashflow.index:
+                        noisy_val = abs(safe_float(cashflow.loc['Net Investment Purchase And Sale'].iloc[0]))
+                        if noisy_val > 0:
+                            # ONLY count as M&A if there was some GW jump (even small) or if value is extreme
+                            # Otherwise, treat as treasury mgmt
+                            if max_delta_gw > 0 or noisy_val > (avg_ocf * 5):
+                                signals.append(noisy_val / avg_ocf)
+
+            if signals:
+                # Composite score (max of high-confidence signals)
+                inorganic_ratio = max(signals)
             
             metrics['inorganic_growth_ratio'] = inorganic_ratio
             if inorganic_ratio > 0.15: # 15% combined threshold
                 metrics['is_acquirer'] = True
                 
-                # The "Roll-up Screener" Logic
+                # The "Roll-up Screener" Logic: Does M&A destroy value?
                 margin_trajectory = metrics.get('ebitda_margin_expansion', 0.0)
                 shares_cagr = metrics.get('shares_outstanding_cagr', 0.0)
                 
                 # Debt to EBITDA (Handle negative or zero ebitda safely)
                 ebitda = safe_float(metrics.get('ebitda', 0.0))
                 total_debt = safe_float(metrics.get('total_debt', 0.0))
+                
+                is_overleveraged = False
                 if ebitda > 0:
                     debt_to_ebitda = total_debt / ebitda
+                    if debt_to_ebitda > 4.0:
+                        is_overleveraged = True
                 else:
-                    debt_to_ebitda = 999.0 if total_debt > 0 else 0.0
-                
-                # We calculated debt_to_ebitda above, but won't save it to db since it is not in the schema.
-                
-                if shares_cagr > 0.03 or margin_trajectory < -0.02 or debt_to_ebitda > 4.0:
-                    metrics['acquirer_type'] = "Dilutive" # Bad Acquirer: Issuing stock, margins diluting, or over-leveraged
+                    # If EBITDA is negative, any significant debt is a risk, 
+                    # but we only count it as a "STRATEGY" failure if margins aren't improving.
+                    if total_debt > (metrics.get('market_cap', 0) * 0.5): # Debt > 50% of Equity
+                        is_overleveraged = True
+
+                # Verdict Logic: Only call it "Dilutive" if they are actually destroying the business
+                # high dilution OR contracting margins OR dangerous leverage while margins are flat/down
+                if shares_cagr > 0.03 or margin_trajectory < -0.02 or (is_overleveraged and margin_trajectory <= 0):
+                    metrics['acquirer_type'] = "Dilutive"
                 else:
-                    metrics['acquirer_type'] = "Compounder" # Good Acquirer
+                    metrics['acquirer_type'] = "Compounder"
             else:
                  metrics['acquirer_type'] = "None"
 

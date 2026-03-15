@@ -93,7 +93,7 @@ if st.sidebar.button("🚀 Sync & Update Database", use_container_width=True, he
 st.sidebar.markdown("---")
 
 @st.fragment(run_every=5)
-def sidebar_status():
+def ingestion_status_bar():
     is_running = is_ingestion_running()
     refreshed, total = get_ingestion_stats()
     
@@ -118,7 +118,7 @@ def sidebar_status():
         else:
             st.success("✅ Database up to date")
 
-sidebar_status()
+# (Removed global call to ingestion_status_bar)
 
 
 def load_data():
@@ -220,6 +220,7 @@ view = st.sidebar.radio("Go to", ["The Launchpad", "🏆 Global Mathematical Ran
 
 if view == "The Launchpad":
     st.title("🚀 The Quantitative Launchpad")
+    ingestion_status_bar()
     st.markdown("Stocks passing the strict Tier 1 filter (<$1B Cap, <25M Float, >60% Margins, +OCF).")
     
     df = load_data()
@@ -266,12 +267,22 @@ elif view == "🛩️ The Cockpit":
                     label = f"{label} ⚠️"
                 else: 
                     label = f"{label} 🛒"
+            elif row.get('inorganic_growth_ratio') is not None and row.get('inorganic_growth_ratio') != 'DATA NOT FOUND':
+                # M&A pipeline ran and found no acquisitions - confirmed organic
+                label = f"{label} 🌱"
             return label
         return ticker_str
 
     tickers = df['ticker'].dropna().unique()
     
-    if 'selected_ticker' not in st.session_state:
+    # --- Japanese Company Filter ---
+    st.sidebar.markdown("---")
+    show_only_jp = st.sidebar.checkbox("🇯🇵 Show Only Japanese Companies", value=False)
+    if show_only_jp:
+        df = df[df['ticker'].str.contains('.T', na=False)]
+        tickers = df['ticker'].dropna().unique()
+
+    if 'selected_ticker' not in st.session_state or st.session_state.selected_ticker not in tickers:
         st.session_state.selected_ticker = tickers[0] if len(tickers) > 0 else None
         
     try:
@@ -307,6 +318,19 @@ elif view == "🛩️ The Cockpit":
         st.session_state.selected_ticker = selected_ticker
         st.rerun()
     
+    with st.expander("📖 How to read the dropdown labels"):
+        st.markdown("""
+| Emoji | What it is | Meaning |
+|:---:|:---|:---|
+| 🏆 🥇 🥈 🥉 📉 | **Tier (left)** | Mathematical ranking: S / A / B / C / Avoid |
+| 🟢 🟡 🔴 | **Your Note (right)** | Your personal verdict: Good / Maybe / Bad |
+| 📈 | **M&A: Compounder** | Company makes acquisitions, and they grow EPS accretively (disciplined buyer) |
+| ⚠️ | **M&A: Dilutive** | Company makes acquisitions, but they dilute EPS or erode margins (bad buyer) |
+| 🛒 | **M&A: Heavy buyer** | Active acquirer, but acquisition quality is not yet confirmed |
+| *(no M&A emoji)* | **No M&A data** | M&A analysis has not run yet, or no significant acquisition history was detected |
+| 🌱 | **Confirmed Organic** | M&A pipeline ran and found no acquisition activity — growth is self-generated |
+        """)
+
     if selected_ticker:
         stock = db.get_stock(selected_ticker)
         company_dir = os.path.join(COMPANIES_DIR, selected_ticker)
@@ -333,32 +357,145 @@ elif view == "🛩️ The Cockpit":
             st.metric("Float Shares", f"{stock.get('float_shares', 0):,.0f}")
             st.metric("Gross Margin", f"{stock.get('gross_margins', 0)*100:.1f}%" if stock.get('gross_margins') else "N/A")
             
+            # Extract universal financial metrics for all expanders
+            try:
+                shares_cagr = float(stock.get('shares_outstanding_cagr', 0.0))
+                if pd.isna(shares_cagr): shares_cagr = 0.0
+            except (ValueError, TypeError):
+                shares_cagr = 0.0
+                
+            try:
+                margin_trajectory = float(stock.get('ebitda_margin_expansion', 0.0))
+                if pd.isna(margin_trajectory): margin_trajectory = 0.0
+            except (ValueError, TypeError):
+                margin_trajectory = 0.0
+            
+            try:
+                ebitda_val = float(stock.get('ebitda', 0.0))
+                if pd.isna(ebitda_val): ebitda_val = 0.0
+            except (ValueError, TypeError):
+                ebitda_val = 0.0
+                
+            try:
+                debt_val = float(stock.get('total_debt', 0.0))
+                if pd.isna(debt_val): debt_val = 0.0
+            except (ValueError, TypeError):
+                debt_val = 0.0
+
+            if ebitda_val > 0:
+                debt_to_ebitda = (debt_val / ebitda_val)
+            else:
+                debt_to_ebitda = 999.0 if debt_val > 0 else 0.0
+
+            # 1. M&A Top-Level Metric (Conditional)
             if stock.get('is_acquirer'):
                 acquirer_type = stock.get('acquirer_type', 'None')
-                try:
-                    shares_cagr = float(stock.get('shares_outstanding_cagr', 0.0))
-                    if pd.isna(shares_cagr): shares_cagr = 0.0
-                except (ValueError, TypeError):
-                    shares_cagr = 0.0
-                    
-                try:
-                    margin_trajectory = float(stock.get('ebitda_margin_expansion', 0.0))
-                    if pd.isna(margin_trajectory): margin_trajectory = 0.0
-                except (ValueError, TypeError):
-                    margin_trajectory = 0.0
-                
-                ebitda_val = stock.get('ebitda', 0.0)
-                debt_val = stock.get('total_debt', 0.0)
-                if ebitda_val and pd.notnull(ebitda_val) and ebitda_val > 0:
-                    debt_to_ebitda = (debt_val / ebitda_val) if pd.notnull(debt_val) else 0.0
-                else:
-                    debt_to_ebitda = 999.0 if (debt_val and pd.notnull(debt_val) and debt_val > 0) else 0.0
-                
                 badge = "M&A Compounder 📈" if acquirer_type == "Compounder" else ("M&A Diluter ⚠️" if acquirer_type == "Dilutive" else "M&A Heavy 🛒")
                 delta_color = "normal" if acquirer_type == "Compounder" else "inverse"
                 
-                st.metric("Inorganic Growth Ratio", f"{stock.get('inorganic_growth_ratio', 0)*100:.1f}%", f"- {badge}", delta_color=delta_color)
+                ma_help = 'ℹ️ Methodology & Accuracy: This "Inorganic Growth Ratio" is a mechanical estimation. It triangulates 3-year average cash outflows with structural jumps in Balance Sheet Goodwill. It is designed for high-accuracy screening but is not a substitute for a manual audit of annual reports.'
+                st.metric("Inorganic Growth Ratio", f"{stock.get('inorganic_growth_ratio', 0)*100:.1f}%", f"- {badge}", delta_color=delta_color, help=ma_help)
+
+            def render_custom_metric(label, value, color_hex, help_text):
+                """Renders a premium colored metric without bulky badges."""
+                # Clean help text for HTML attribute (no newlines)
+                safe_help = help_text.replace('\n', ' | ').replace('"', '&quot;')
+                st.markdown(f"""
+                <div style="margin-bottom: 12px; cursor: help;" title="{safe_help}">
+                    <div style="font-size: 0.85rem; color: #999; margin-bottom: 2px; font-weight: 500;">{label}</div>
+                    <div style="font-size: 1.7rem; font-weight: 700; color: {color_hex}; line-height: 1.1;">{value}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # 2. The Quantitative Engine (Universal)
+            with st.expander("🛠️ The Quantitative Engine (Ranking Factors)", expanded=False):
+                st.info("These are the raw inputs used for the Global Mathematical Ranking.")
+                qcol1, qcol2 = st.columns(2)
                 
+                with qcol1:
+                    # ROIIC
+                    roiic = stock.get('roiic')
+                    roi_val = float(roiic) if roiic is not None and roiic != "DATA NOT FOUND" else None
+                    roi_color = "#757575"
+                    if roi_val is not None:
+                        if roi_val > 0.30: roi_color = "#00c853" # Elite Neon Green
+                        elif roi_val > 0.15: roi_color = "#2e7d32" # Good Forest Green
+                        elif roi_val > 0.05: roi_color = "#757575" # Mid
+                        else: roi_color = "#d32f2f" # Bad
+                    
+                    roiic_help = "ROIIC: Efficiency of new capital. (Elite: >30%, Good: >15%, Mid: >5%, Bad: <5%)"
+                    render_custom_metric("ROIIC", f"{roi_val*100:.1f}%" if roi_val is not None else "N/A", roi_color, roiic_help)
+                    
+                    # 3GP Score
+                    tgp = stock.get('three_gp_score')
+                    tgp_val = float(tgp) if tgp is not None and tgp != "DATA NOT FOUND" else None
+                    tgp_color = "#757575"
+                    if tgp_val is not None:
+                        if tgp_val > 80: tgp_color = "#00c853" # Elite
+                        elif tgp_val > 50: tgp_color = "#2e7d32" # Good
+                        elif tgp_val > 20: tgp_color = "#757575" # Mid
+                        else: tgp_color = "#d32f2f" # Bad
+                    
+                    three_gp_help = "3GP: 3x Rev Growth + EBITDA Margin. (Elite: >80, Good: >50, Mid: >20, Bad: <20)"
+                    render_custom_metric("3GP Score", f"{tgp_val:.1f}" if tgp_val is not None else "N/A", tgp_color, three_gp_help)
+                    
+                    # Altman Z
+                    zsc = stock.get('altman_z_score')
+                    z_val = float(zsc) if zsc is not None and zsc != "DATA NOT FOUND" else None
+                    z_color = "#757575"
+                    if z_val is not None:
+                        if z_val > 3.0: z_color = "#00c853" # Safe/Elite
+                        elif z_val > 1.8: z_color = "#757575" # Grey
+                        else: z_color = "#d32f2f" # Distressed
+                    
+                    altman_help = "Altman Z: Bankruptcy risk. (Safe: >3.0, Grey: >1.8, Alarm: <1.8)"
+                    render_custom_metric("Altman Z-Score", f"{z_val:.2f}" if z_val is not None else "N/A", z_color, altman_help)
+
+                with qcol2:
+                    # Accruals Ratio
+                    acc = stock.get('accruals_ratio')
+                    acc_val = float(acc) if acc is not None and acc != "DATA NOT FOUND" else None
+                    acc_color = "#757575"
+                    if acc_val is not None:
+                        if acc_val < -0.10: acc_color = "#00c853" # Elite
+                        elif acc_val < 0.10: acc_color = "#757575" # Good/Stable
+                        else: acc_color = "#d32f2f" # Bad
+                    
+                    accruals_help = "Accruals: Quality of earnings/Cash conversion. (Elite: < -0.10, Good: < 0.10, Bad: > 0.10)"
+                    render_custom_metric("Accruals Ratio", f"{acc_val:.3f}" if acc_val is not None else "N/A", acc_color, accruals_help)
+                    
+                    # Cash Runway
+                    runway = stock.get('cash_runway_months')
+                    runway_val = float(runway) if runway is not None and runway != "DATA NOT FOUND" else None
+                    runway_str, runway_color = ("N/A", "#757575")
+                    if runway_val is not None:
+                        if runway_val == 999.0:
+                            runway_str, runway_color = ("∞", "#00c853") # Elite
+                        else:
+                            runway_str = f"{runway_val:.0f} mo"
+                            if runway_val > 24: runway_color = "#2e7d32" # Good
+                            elif runway_val > 12: runway_color = "#757575"
+                            else: runway_color = "#d32f2f"
+                    
+                    runway_help = "Runway: Months of cash left at current burn. (Elite: ∞, Good: >24 mo, Mid: >12 mo, Bad: <12 mo)"
+                    render_custom_metric("Cash Runway", runway_str, runway_color, runway_help)
+                    
+                    # Proxy WACC
+                    wac = stock.get('proxy_wacc')
+                    wac_val = float(wac) if wac is not None and wac != "DATA NOT FOUND" else None
+                    wac_color = "#757575"
+                    if wac_val is not None:
+                        if wac_val <= 0.085: wac_color = "#00c853" # Elite Safe
+                        elif wac_val <= 0.11: wac_color = "#757575" # Standard
+                        else: wac_color = "#d32f2f" # High Risk
+                    
+                    wacc_help = "WACC: Est. cost of capital based on z-score. (Safe: 8.5%, Risk: 15%)"
+                    render_custom_metric("Proxy WACC", f"{wac_val*100:.1f}%" if wac_val is not None else "N/A", wac_color, wacc_help)
+
+            # 3. M&A Assessment (Conditional)
+            if stock.get('is_acquirer'):
+                acquirer_type = stock.get('acquirer_type', 'None')
+                badge = "M&A Compounder 📈" if acquirer_type == "Compounder" else ("M&A Diluter ⚠️" if acquirer_type == "Dilutive" else "M&A Heavy 🛒")
                 with st.expander("📝 M&A Strategy Assessment"):
                     st.markdown(f"**Verdict:** {badge}")
                     if acquirer_type == "Compounder":
@@ -367,10 +504,30 @@ elif view == "🛩️ The Cockpit":
                         st.error("This company is executing a poor Roll-up strategy. Their revenue growth has been mathematically discounted in the rankings.")
                     
                     st.markdown(f"""
-                    *   **Funding (Share Count):** The share count has grown by **{shares_cagr*100:.1f}%** annually. {'(Accretive)' if shares_cagr <= 0.03 else '(Dilutive)'}
-                    *   **Execution (Margins):** EBITDA margins have expanded by **{margin_trajectory*100:.1f} pts**. {'(Successful Integration)' if margin_trajectory >= -0.02 else '(Diworsification)'}
-                    *   **Leverage (Debt/EBITDA):** **{debt_to_ebitda:.1f}x**. {'(Safe)' if debt_to_ebitda <= 4.0 else '(Over-Leveraged)'}
+                    *   **Funding (Share Count):** The share count has **{'shrunk' if shares_cagr < -0.001 else 'grown'}** by **{abs(shares_cagr*100):.1f}%** annually. {'🟢 (Accretive — Buybacks)' if shares_cagr < -0.001 else '🔵 (Neutral — Stable)' if shares_cagr <= 0.01 else '🟡 (Mild Dilution)' if shares_cagr <= 0.03 else '🔴 (Dilutive)'}
+                    *   **Execution (Margins):** EBITDA margins have **{'expanded' if margin_trajectory >= 0 else 'contracted'}** by **{abs(margin_trajectory*100):.1f} pts**. {'(Successful Integration)' if margin_trajectory >= 0 else '(Diworsification)' if margin_trajectory < -0.05 else '(Mild Compression)'}
+                    
+                    ---
+                    ℹ️ **Methodology & Accuracy:** This "Inorganic Growth Ratio" is a mechanical estimation. It **triangulates** 3-year average cash outflows with structural jumps in Balance Sheet Goodwill. It is designed for high-accuracy screening but is not a substitute for a manual audit of annual reports.
                     """)
+            
+            # 4. Risk & Solvency (Universal)
+            with st.expander("⚠️ Risk & Solvency"):
+                is_neg_ebitda = ebitda_val <= 0
+                risk_label = "🔴 High Risk (Neg EBITDA)" if is_neg_ebitda else ("🟢 Healthy" if debt_to_ebitda <= 3.0 else "🟡 Leveraged")
+                st.markdown(f"**Status:** {risk_label}")
+                
+                runway = stock.get('cash_runway_months')
+                runway_text = "N/A"
+                if runway == 999.0:
+                    runway_text = "∞ (Self-Sustaining)"
+                elif runway is not None and runway != "DATA NOT FOUND":
+                    runway_text = f"{float(runway):.0f} months"
+
+                st.markdown(f"""
+                *   **Leverage (Debt/EBITDA):** **{'N/A (Negative EBITDA)' if is_neg_ebitda else f'{debt_to_ebitda:.1f}x'}**. {'(Safe)' if debt_to_ebitda <= 4.0 else '(Over-Leveraged)' if debt_to_ebitda < 999.0 else '(Cannot calculate — EBITDA is zero or negative)'}
+                *   **Liquidity:** {runway_text} of cash runway.
+                """)
             
             st.markdown(f"📈 **[View on Yahoo Finance](https://finance.yahoo.com/quote/{selected_ticker})**")
             ir_query = quote_plus(f"{stock['name']} investor relations")
@@ -395,8 +552,9 @@ elif view == "🛩️ The Cockpit":
                     os.remove(pdf_path)
                     db.update_stock_metrics(stock['isin'], {'annual_report_path': None})
                     st.rerun()
-            else:
+            if not has_pdf:
                 st.error("No Annual Report PDF found.")
+                
                 uploaded_file = st.file_uploader("Upload Annual Report PDF", type="pdf", key=f"annual_up_{selected_ticker}")
                 if uploaded_file is not None:
                     pdf_save_path = os.path.join(company_dir, uploaded_file.name)
@@ -406,11 +564,51 @@ elif view == "🛩️ The Cockpit":
                     st.success("Annual Report uploaded!")
                     st.rerun()
 
+            # Japanese Company Support (Annual)
+            if selected_ticker.endswith(".T"):
+                with st.expander("🇯🇵 EDINET Japan (Annual Report)", expanded=not has_pdf):
+                    st.info("💡 Fetch the official Annual Securities Report (Yuho) from EDINET.")
+                    if st.button("🇯🇵 Download Japanese Yuho (10-K)", key=f"dl_jp_{selected_ticker}"):
+                        with st.spinner("Searching EDINET... (this may take a minute)"):
+                            import subprocess
+                            try:
+                                result = subprocess.run(
+                                    [sys.executable, "pipeline/download_jp_report.py", selected_ticker, "--days", "500", "--type", "annual"],
+                                    capture_output=True, text=True, check=False
+                                )
+                                if result.returncode == 0:
+                                    st.success("Download Successful!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Download Failed: {result.stderr or 'No recent Yuho found.'}")
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
             custom_question_annual = st.text_area("Optional: Custom Detective Question / Thesis Note", key=f"q_{selected_ticker}")
             if st.button("🚀 Run 'Rocket Fuel' Deep Dive (PDF)", disabled=not has_pdf, key=f"deep_{selected_ticker}"):
                 run_analysis(selected_ticker, lite_mode=False, custom_question=custom_question_annual)
 
             st.markdown("### Interim / Quarterly Reports")
+            
+            # Japanese Company Support (Quarterly)
+            if selected_ticker.endswith(".T"):
+                with st.expander("🇯🇵 EDINET Japan (Quarterly/Interim)", expanded=False):
+                    st.info("💡 Fetch the official Quarterly or Interim report from EDINET.")
+                    if st.button("🇯🇵 Download Quarterly/Interim Report", key=f"dl_jp_qt_{selected_ticker}"):
+                        with st.spinner("Searching EDINET... (this may take a minute)"):
+                            import subprocess
+                            try:
+                                result = subprocess.run(
+                                    [sys.executable, "pipeline/download_jp_report.py", selected_ticker, "--days", "300", "--type", "quarterly"],
+                                    capture_output=True, text=True, check=False
+                                )
+                                if result.returncode == 0:
+                                    st.success("Download Successful!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Download Failed: {result.stderr or 'No recent Quarterly/Interim report found.'}")
+                            except Exception as e:
+                                st.error(f"Error: {e}")
             interim_pdfs = sorted([f for f in os.listdir(company_dir) if f.lower().endswith('.pdf') and f.startswith('Interim_')], reverse=True)
             if interim_pdfs:
                 selected_interim = st.selectbox("Select Interim Report", interim_pdfs, key=f"interim_sel_{selected_ticker}")

@@ -18,21 +18,18 @@ data/reports/
 data/findings/
 data/tickers.json
 data/model_blacklist.json
+data/edinet_cache/
+data/edinet_mapping.json
 
-# Streamlit App
-.streamlit/
-ui/.streamlit/
+# Scratch Files (Root)
+edinet.md
+test_metrics.py
+example.csv
+japan_small_caps.csv
 
-# Python Artifacts
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Logs
-logs/
-*.log
-
-# OS generated files
+# IDEs
+.vscode/
+.idea/
 .DS_Store
 .DS_Store?
 ._*
@@ -40,3 +37,17 @@ logs/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Python Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Logs
+logs/
+*.log
+
