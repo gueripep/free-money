@@ -7,6 +7,7 @@ sys.path.append(PROJECT_ROOT)
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 from urllib.parse import quote_plus
 import json
@@ -127,7 +128,7 @@ def load_data():
     if not df.empty:
         # Pre-coerce numeric columns to handle "DATA NOT FOUND" strings safely
         numeric_cols = [
-            'market_cap', 'float_shares', 'revenue_growth', 'profit_margins', 
+            'market_cap', 'float_shares', 'shares_outstanding', 'revenue_growth', 'profit_margins', 
             'gross_margins', 'operating_margins', 'return_on_equity', 
             'total_debt', 'debt_to_equity', 'free_cashflow', 'enterprise_value', 
             'ebitda', 'operating_cash_flow', 'composite_score', 'inorganic_growth_ratio'
@@ -143,6 +144,10 @@ def load_data():
         if 'acquirer_type' in df.columns:
             df['acquirer_type'] = df['acquirer_type'].fillna('None')
 
+        # Calculate Float % for the tables
+        if 'float_shares' in df.columns and 'shares_outstanding' in df.columns:
+            df['float_pct'] = (df['float_shares'] / df['shares_outstanding'].replace(0, np.nan))
+                
         if 'composite_score' in df.columns:
             df['composite_score'] = df['composite_score'].fillna(-99.0)
             df = df.sort_values(by='composite_score', ascending=False)
@@ -226,10 +231,10 @@ if view == "The Launchpad":
     df = load_data()
     if not df.empty:
         # Display nicely formatting table
-        cols_to_show = ['ticker', 'manual_note', 'name', 'market_cap', 'float_shares', 'revenue_growth', 'gross_margins', 'operating_cash_flow', 'recommendation']
+        cols_to_show = ['ticker', 'manual_note', 'name', 'market_cap', 'float_pct', 'revenue_growth', 'gross_margins', 'operating_cash_flow', 'recommendation']
         st.dataframe(df[cols_to_show].style.format({
             "market_cap": "${:,.0f}",
-            "float_shares": "{:,.0f}",
+            "float_pct": "{:.1%}",
             "revenue_growth": "{:.1%}",
             "gross_margins": "{:.1%}",
             "operating_cash_flow": "${:,.0f}"
@@ -354,15 +359,19 @@ elif view == "🛩️ The Cockpit":
                 
             st.markdown("---")
             st.metric("Market Cap", f"${stock.get('market_cap', 0):,.0f}")
-            st.metric("Float Shares", f"{stock.get('float_shares', 0):,.0f}")
+            
+            # Calculate Float Shares %
+            float_shares = stock.get('float_shares', 0)
+            shares_out = stock.get('shares_outstanding', 0)
+            
+            if shares_out and shares_out > 0:
+                float_pct = (float_shares / shares_out) * 100
+                st.metric("Float Shares %", f"{float_pct:.1f}%", help=f"Absolute float: {float_shares:,.0f} shares")
+            else:
+                st.metric("Float Shares %", "N/A", help=f"Refresh metrics to calculate percentage. Current float: {float_shares:,.0f}" if float_shares else "No float data found.")
+                
             st.metric("Gross Margin", f"{stock.get('gross_margins', 0)*100:.1f}%" if stock.get('gross_margins') else "N/A")
             
-            # Extract universal financial metrics for all expanders
-            try:
-                shares_cagr = float(stock.get('shares_outstanding_cagr', 0.0))
-                if pd.isna(shares_cagr): shares_cagr = 0.0
-            except (ValueError, TypeError):
-                shares_cagr = 0.0
                 
             try:
                 margin_trajectory = float(stock.get('ebitda_margin_expansion', 0.0))
@@ -387,15 +396,6 @@ elif view == "🛩️ The Cockpit":
             else:
                 debt_to_ebitda = 999.0 if debt_val > 0 else 0.0
 
-            # 1. M&A Top-Level Metric (Conditional)
-            if stock.get('is_acquirer'):
-                acquirer_type = stock.get('acquirer_type', 'None')
-                badge = "M&A Compounder 📈" if acquirer_type == "Compounder" else ("M&A Diluter ⚠️" if acquirer_type == "Dilutive" else "M&A Heavy 🛒")
-                delta_color = "normal" if acquirer_type == "Compounder" else "inverse"
-                
-                ma_help = 'ℹ️ Methodology & Accuracy: This "Inorganic Growth Ratio" is a mechanical estimation. It triangulates 3-year average cash outflows with structural jumps in Balance Sheet Goodwill. It is designed for high-accuracy screening but is not a substitute for a manual audit of annual reports.'
-                st.metric("Inorganic Growth Ratio", f"{stock.get('inorganic_growth_ratio', 0)*100:.1f}%", f"- {badge}", delta_color=delta_color, help=ma_help)
-
             def render_custom_metric(label, value, color_hex, help_text):
                 """Renders a premium colored metric without bulky badges."""
                 # Clean help text for HTML attribute (no newlines)
@@ -406,6 +406,28 @@ elif view == "🛩️ The Cockpit":
                     <div style="font-size: 1.7rem; font-weight: 700; color: {color_hex}; line-height: 1.1;">{value}</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+            # --- Primary Quantitative Indicators ---
+            q_col1, q_col2 = st.columns(2)
+            with q_col1:
+                # 1. Dilution Indicator
+                try:
+                    shares_cagr = float(stock.get('shares_outstanding_cagr', 0.0))
+                except (ValueError, TypeError):
+                    shares_cagr = 0.0
+                
+                dilution_help = "Year-over-year change in shares outstanding. Positive is dilution (bad), negative is buyback (good)."
+                dilution_color = "#757575"
+                if shares_cagr > 0.001: dilution_color = "#d32f2f" # Red for Dilution
+                elif shares_cagr < -0.001: dilution_color = "#00c853" # Green for Buybacks
+                
+                render_custom_metric("Dilution", f"{shares_cagr*100:+.1f}%", dilution_color, dilution_help)
+            
+            with q_col2:
+                # 2. M&A Top-Level Metric (Conditional)
+                if stock.get('is_acquirer'):
+                    ma_help = 'ℹ️ Methodology & Accuracy: This "Inorganic Growth Ratio" is a mechanical estimation. It triangulates 3-year average cash outflows with structural jumps in Balance Sheet Goodwill. It is designed for high-accuracy screening but is not a substitute for a manual audit of annual reports.'
+                    render_custom_metric("Inorganic Growth", f"{stock.get('inorganic_growth_ratio', 0)*100:.1f}%", "#757575", ma_help)
 
             # 2. The Quantitative Engine (Universal)
             with st.expander("🛠️ The Quantitative Engine (Ranking Factors)", expanded=False):
@@ -507,9 +529,7 @@ elif view == "🛩️ The Cockpit":
                     *   **Funding (Share Count):** The share count has **{'shrunk' if shares_cagr < -0.001 else 'grown'}** by **{abs(shares_cagr*100):.1f}%** annually. {'🟢 (Accretive — Buybacks)' if shares_cagr < -0.001 else '🔵 (Neutral — Stable)' if shares_cagr <= 0.01 else '🟡 (Mild Dilution)' if shares_cagr <= 0.03 else '🔴 (Dilutive)'}
                     *   **Execution (Margins):** EBITDA margins have **{'expanded' if margin_trajectory >= 0 else 'contracted'}** by **{abs(margin_trajectory*100):.1f} pts**. {'(Successful Integration)' if margin_trajectory >= 0 else '(Diworsification)' if margin_trajectory < -0.05 else '(Mild Compression)'}
                     
-                    ---
-                    ℹ️ **Methodology & Accuracy:** This "Inorganic Growth Ratio" is a mechanical estimation. It **triangulates** 3-year average cash outflows with structural jumps in Balance Sheet Goodwill. It is designed for high-accuracy screening but is not a substitute for a manual audit of annual reports.
-                    """)
+                                       """)
             
             # 4. Risk & Solvency (Universal)
             with st.expander("⚠️ Risk & Solvency"):

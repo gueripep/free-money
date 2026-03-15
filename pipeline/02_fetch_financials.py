@@ -96,6 +96,7 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
             'proxy_wacc': 0.10, # Default
             'inorganic_growth_ratio': 0.0,
             'is_acquirer': False,
+            'shares_outstanding': "DATA NOT FOUND",
             'shares_outstanding_cagr': 0.0, # Initialize
             'currency': info.get('currency', 'USD'),
             'name': info.get('longName') or info.get('shortName') or info.get('name')
@@ -115,7 +116,8 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
             'enterprise_value': 'enterpriseValue',
             'ebitda': 'ebitda',
             'operating_cash_flow': 'operatingCashflow',
-            'float_shares': 'floatShares'
+            'float_shares': 'floatShares',
+            'shares_outstanding': 'sharesOutstanding'
         }
         
         for m_key, info_key in raw_keys.items():
@@ -189,23 +191,34 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
             # --- Altman Z-Score ---
             if not balance_sheet.empty and not financials.empty:
                 try:
-                    current_assets = safe_float(balance_sheet.loc['Total Current Assets'].iloc[0]) if 'Total Current Assets' in balance_sheet.index else 0
-                    current_liabilities = safe_float(balance_sheet.loc['Total Current Liabilities'].iloc[0]) if 'Total Current Liabilities' in balance_sheet.index else 0
-                    total_assets = safe_float(balance_sheet.loc['Total Assets'].iloc[0]) if 'Total Assets' in balance_sheet.index else 1 # Avoid div by zero
-                    retained_earnings = safe_float(balance_sheet.loc['Retained Earnings'].iloc[0]) if 'Retained Earnings' in balance_sheet.index else 0
+                    # Robust key lookup for Balance Sheet
+                    def bs_get(keys):
+                        for k in keys:
+                            if k in balance_sheet.index:
+                                return safe_float(balance_sheet.loc[k].iloc[0])
+                        return 0.0
+
+                    current_assets = bs_get(['Total Current Assets', 'Current Assets'])
+                    current_liabilities = bs_get(['Total Current Liabilities', 'Current Liabilities'])
+                    total_assets = bs_get(['Total Assets']) or 1.0 # Avoid div by zero
+                    retained_earnings = bs_get(['Retained Earnings'])
+                    total_liabilities = bs_get(['Total Liabilities Net Minority Interest', 'Total Liabilities']) or 1.0
+                    
                     ebit = safe_float(financials.loc['EBIT'].iloc[0]) if 'EBIT' in financials.index else 0
-                    total_liabilities = safe_float(balance_sheet.loc['Total Liabilities Net Minority Interest'].iloc[0]) if 'Total Liabilities Net Minority Interest' in balance_sheet.index else 1
                     sales = safe_float(financials.loc['Total Revenue'].iloc[0]) if 'Total Revenue' in financials.index else 0
-                    market_val_equity = safe_float(metrics.get('market_cap', 0))
+                    
+                    # CRITICAL: Use Market Cap in RAW currency (same as BS/IS)
+                    # metrics['market_cap'] is already normalized to USD, which breaks non-USD score ratios.
+                    market_val_equity = safe_float(info.get('marketCap', 0))
 
                     working_capital = current_assets - current_liabilities
                     
                     z_score = (1.2 * (working_capital / total_assets)) + \
-                              (1.4 * (retained_earnings / total_assets)) + \
-                              (3.3 * (ebit / total_assets)) + \
-                              (0.6 * (market_val_equity / total_liabilities)) + \
-                              (1.0 * (sales / total_assets))
-                              
+                               (1.4 * (retained_earnings / total_assets)) + \
+                               (3.3 * (ebit / total_assets)) + \
+                               (0.6 * (market_val_equity / total_liabilities)) + \
+                               (1.0 * (sales / total_assets))
+                               
                     metrics['altman_z_score'] = z_score
                 except Exception as e:
                     logger.debug(f"Missing fields for Altman Z-Score for {ticker}: {e}")
@@ -412,6 +425,7 @@ def get_financial_metrics(ticker_name: str) -> Optional[Dict]:
         logger.error(f"Error fetching data for {ticker}: {e}")
         return None
 
+
 def resolve_ticker(isin: str) -> Optional[str]:
     """Resolves an ISIN to a Yahoo Finance ticker."""
     try:
@@ -459,6 +473,7 @@ def run_batch_update(limit: int = None, progress_callback=None):
             float_shares IS NULL 
             OR market_cap IS NULL 
             OR enterprise_value IS NULL 
+            OR shares_outstanding IS NULL
             OR last_updated < datetime('now', '-30 days')
           )
     '''
