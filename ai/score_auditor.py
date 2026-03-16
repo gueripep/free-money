@@ -29,8 +29,8 @@ class ScoreAuditor:
         """Audits the scores and returns potentially adjusted values."""
         
         prompt_text = f"""
-        Act as a brutal Devil's Advocate and Chief Compliance Officer for a hedge fund.
-        Your job is to audit the investment analysis and scores produced by another agent.
+        Act as a senior investment calibration specialist at a premier hedge fund.
+        Your job is to audit the investment analysis and scores produced by another agent to ensure they are consistent with the provided evidence and behavioral anchors.
         
         COMPANY: {company_name}
         
@@ -47,15 +47,17 @@ class ScoreAuditor:
         - Risk: {original_analysis.score_risk_profile}
         
         CRITICAL AUDIT DIRECTIVE:
-        Look for "generative politeness" and score inflation. If the rationale mentions ANY significant weakness (e.g., customer concentration, high debt, low margins), the score CANNOT be a 5. A 5 is for perfection. A 4 is for excellence. A 3 is average.
+        Ensure the final integer scores accurately reflect the balance of risks and strengths described in the rationale. 
+        A 5 represents elite performance where strengths significantly outweigh manageable risks.
+        A 4 represents excellence with clearly identified but non-terminal trade-offs.
+        A 3 represents a solid/average business with standard risks.
         
-        For each score, you must either:
-        1. **Confirm**: The score is perfectly supported by the evidence.
-        2. **Adjust Down**: The rationale shows flaws that the integer score ignored. (Most common)
-        3. **Adjust Up**: The rationale shows exceptional strength that was undervalued.
+        For each score, you must:
+        1. **Confirm**: The score is perfectly supported by the evidence and anchors.
+        2. **Adjust**: If the rationale clearly indicates a different tier (up or down) than the assigned integer.
         
         OUTPUT FORMAT:
-        You must return the final (potentially adjusted) integer scores and a list of justifications for any changes.
+        You must return the final (calibrated) integer scores and a list of justifications for any changes.
         """
         
         logger.info(f"ScoreAuditor: Auditing scores for {company_name}...")

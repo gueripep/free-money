@@ -89,12 +89,92 @@ class EdinetClient:
             return {}
 
     def get_company_info(self, ticker: str) -> Optional[Dict]:
-        """Gets mapping data for a ticker."""
+        """Gets mapping data for a ticker. Auto-discovers from EDINET filings if not found."""
         clean_ticker = ticker.split('.')[0].strip()
         info = self.mapping_data.get(clean_ticker)
         if not info:
-             logger.warning(f"Ticker {clean_ticker} not found in EDINET mapping. You can add it manually to {os.path.basename(EDINET_OVERRIDES_FILE)}.")
+            logger.info(f"Ticker {clean_ticker} not in static mapping. Attempting auto-discovery from recent EDINET filings...")
+            info = self._auto_discover_edinet_code(clean_ticker)
+            if info:
+                # Cache into memory and persist to overrides file
+                self.mapping_data[clean_ticker] = info
+                self._save_override(clean_ticker, info)
+                logger.info(f"Auto-discovered EDINET code for {clean_ticker}: {info['edinet_code']} ({info.get('name', 'N/A')})")
+            else:
+                logger.warning(f"Ticker {clean_ticker} not found in EDINET mapping or recent filings. You can add it manually to {os.path.basename(EDINET_OVERRIDES_FILE)}.")
         return info
+
+    def _auto_discover_edinet_code(self, ticker: str, scan_days: int = 30) -> Optional[Dict]:
+        """Discovers EDINET code for an unknown ticker by searching cached filings first, then the API.
+        
+        EDINET secCode format: the ticker + a check digit (e.g., ticker 6058 -> secCode 60580,
+        ticker 369A -> secCode 369A0). We match secCode[:len(ticker)] == ticker.
+        """
+        import glob
+
+        def _match_in_docs(docs: list) -> Optional[Dict]:
+            for doc in docs:
+                sec_code = (doc.get("secCode") or "").strip()
+                edinet_code = doc.get("edinetCode") or ""
+                if not sec_code or not edinet_code:
+                    continue
+                if sec_code[:len(ticker)] == ticker:
+                    return {
+                        "edinet_code": edinet_code,
+                        "fiscal_end": "",
+                        "name": doc.get("filerName", "")
+                    }
+            return None
+
+        # 1. Search all locally cached EDINET JSON files (instant, covers months of history)
+        cache_files = sorted(glob.glob(os.path.join(EDINET_CACHE_DIR, "*.json")), reverse=True)
+        if cache_files:
+            logger.info(f"Searching {len(cache_files)} cached EDINET filing days for ticker {ticker}...")
+            for cache_file in cache_files:
+                try:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        docs = json.load(f)
+                    result = _match_in_docs(docs)
+                    if result:
+                        return result
+                except Exception:
+                    continue
+
+        # 2. Fallback: scan recent uncached days via the EDINET API
+        if not self.api_key:
+            logger.warning("Cannot auto-discover via API without EDINET_API_KEY.")
+            return None
+
+        logger.info(f"Not found in cache. Scanning last {scan_days} days via EDINET API...")
+        current_date = datetime.now()
+        for day_offset in range(scan_days):
+            search_date = current_date - timedelta(days=day_offset)
+            if search_date.weekday() >= 5:  # Skip weekends
+                continue
+
+            docs = self.get_document_list(search_date)
+            result = _match_in_docs(docs)
+            if result:
+                return result
+
+        return None
+
+    def _save_override(self, ticker: str, info: Dict):
+        """Persists a newly discovered ticker mapping to the overrides JSON file."""
+        overrides = {}
+        if os.path.exists(EDINET_OVERRIDES_FILE):
+            try:
+                with open(EDINET_OVERRIDES_FILE, 'r', encoding='utf-8') as f:
+                    overrides = json.load(f)
+            except Exception:
+                pass
+        overrides[ticker] = info
+        try:
+            with open(EDINET_OVERRIDES_FILE, 'w', encoding='utf-8') as f:
+                json.dump(overrides, f, indent=4, ensure_ascii=False)
+            logger.info(f"Saved {ticker} to {os.path.basename(EDINET_OVERRIDES_FILE)}")
+        except Exception as e:
+            logger.error(f"Failed to save override for {ticker}: {e}")
 
     def download_document(self, doc_id: str, save_path: str) -> bool:
         """Downloads a PDF document from EDINET."""

@@ -47,27 +47,27 @@ class BlindEvaluationAgent:
         self.client = client
         
     def evaluate(self, extraction_data: BlindQualitativeExtractionSchema) -> BlindQualitativeEvaluationSchema:
-        """Pass Two: Evaluates the structural quality using Brutal Skepticism."""
+        """Pass Two: Evaluates the structural quality using strategic synthesis."""
         
         prompt_text = f"""
-        You are an elite, highly skeptical Chief Investment Officer. You practice "Brutal Skepticism".
-        Evaluate the following anonymized business profile. Apply strategic frameworks (Porter's 5 Forces, Helmer's 7 Powers) with a focus on durability.
+        You are an elite Chief Investment Officer specializing in structural business analysis.
+        Evaluate the following anonymized business profile. Apply strategic frameworks (Porter's 5 Forces, Helmer's 7 Powers) with a focus on durability and scalability.
         
         DATA FOR EVALUATION:
         {extraction_data.model_dump_json(indent=2)}
         
         EVALUATION FRAMEWORKS:
-        1. **The Killer Force**: In the Porter's analysis, identify the ONE force that will eventually kill this business.
-        2. **Moat Sustainability**: Will this moat last 10 years? Why or why not? Be specific about competitive threats.
-        3. **Talent & Culture Risk**: If the business is human-capital intensive (like creative industries or consulting), evaluate the risk of 'Brain Drain' and whether management's maneuvers (e.g., salary increases) are actually effective or just defensive.
-        4. **Tactical Conflicts**: Identify where the business model is at war with itself.
-        5. **Forwarding Context**: Refine and pass through the **Industry Context**, **Strategic Maneuvers**, and **Future Catalysts** from the extraction phase, adding your strategic evaluation to them.
+        1. **The Primary Constraint**: In the Porter's analysis, identify the ONE force that acts as the primary constraint on long-term profitability.
+        2. **Moat Sustainability**: Evaluate the durability of the structural advantages over a 10-year horizon. Be specific about competitive threats and potential for commoditization.
+        3. **Talent & Culture Context**: If the business is human-capital intensive, evaluate the sustainability of its talent model and any brain-drain risks.
+        4. **Operational Tensions**: Identify any internal contradictions or strategic trade-offs in the model.
+        5. **Balanced Perspective**: Refine the **Industry Context**, **Strategic Maneuvers**, and **Future Catalysts** from the extraction phase, adding your objective strategic evaluation.
         
         GOAL:
-        Write a long-form, vivid, and blunt assessment. Avoid boring business-speak. 
+        Write a vivid, insightful, and balanced assessment that avoids corporate clichés.
         """
         
-        logger.info("BlindEvaluationAgent: Performing Brutal Skepticism evaluation...")
+        logger.info("BlindEvaluationAgent: Performing strategic synthesis evaluation...")
         
         result = self.client.generate_structured_content([prompt_text], BlindQualitativeEvaluationSchema)
         

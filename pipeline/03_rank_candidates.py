@@ -14,6 +14,18 @@ from ai.prompts import get_tier_list_comparison_prompt
 
 logger = setup_logging("rank_candidates")
 
+def winsorize_zscore(series, cap=3.0):
+    """Compute z-scores and cap at ±cap to prevent outlier domination.
+    
+    A single extreme value (e.g., ROIIC of 389% from a difference/difference
+    artifact) can generate a z-score of 5+ and single-handedly dominate the
+    composite score. Capping at ±3.0 ensures elite metrics still score high
+    but cannot overpower all other dimensions combined.
+    """
+    z = (series - series.mean()) / (series.std() + 1e-6)
+    return z.clip(-cap, cap)
+
+
 def load_methodology() -> str:
     """Loads the tier list methodology text."""
     # Using a condensed version of the methodology text for the AI context.
@@ -22,8 +34,12 @@ The Calculus of Outperformance: Multi-Factor Weighted Scoring Model
 - Capital Efficiency (30%): ROIIC, 3GP Score, FCF Yield.
 - Moat & Margin Durability (25%): ROIC Decay, Gross Margin Stability, SG&A Efficiency.
 - Growth-Adjusted Valuation (20%): EV/Sales/Growth, EV/GP.
-- Downside & Forensic Risk (15%): Altman Z-Score, Accruals Ratio, Cash Runway.
+- Downside & Forensic Risk (15%): Altman Z-Score, Accruals Ratio, Cash Runway, Share Dilution/Buybacks.
 - Market Runway (10%): Market Penetration Rate, TAM/SOM.
+
+Notes:
+- All z-scores are winsorized (capped at ±3.0 std dev) to prevent outlier domination.
+- Companies in Altman Z-Score distress zone (<1.8) are hard-capped below S-Tier.
 """
 
 def process_tier_list(gemini_client: Optional[GeminiClient] = None):
@@ -44,37 +60,38 @@ def process_tier_list(gemini_client: Optional[GeminiClient] = None):
     numeric_cols = [
         'roic_decay_rate', 'gross_margin_stability', 'sga_efficiency_delta',
         'ebitda_margin_expansion', 'roiic', 'three_gp_score', 'altman_z_score',
-        'accruals_ratio', 'cash_runway_months'
+        'accruals_ratio', 'cash_runway_months', 'shares_outstanding_cagr'
     ]
     
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # --- Dimension Scoring (Calculation of Z-Scores) ---
-    logger.info("Computing Dimension Z-Scores...")
+    # --- Dimension Scoring (Winsorized Z-Scores, capped at ±3.0) ---
+    logger.info("Computing Dimension Z-Scores (winsorized at ±3.0)...")
     
     # 1. Moat & Margin (25%)
     # Higher is better for expansion, lower is better for decay/stability/sga
     df['score_moat'] = (
-        (df['ebitda_margin_expansion'] - df['ebitda_margin_expansion'].mean()) / (df['ebitda_margin_expansion'].std() + 1e-6) -
-        (df['roic_decay_rate'] - df['roic_decay_rate'].mean()) / (df['roic_decay_rate'].std() + 1e-6) -
-        (df['gross_margin_stability'] - df['gross_margin_stability'].mean()) / (df['gross_margin_stability'].std() + 1e-6) -
-        (df['sga_efficiency_delta'] - df['sga_efficiency_delta'].mean()) / (df['sga_efficiency_delta'].std() + 1e-6)
+        winsorize_zscore(df['ebitda_margin_expansion']) -
+        winsorize_zscore(df['roic_decay_rate']) -
+        winsorize_zscore(df['gross_margin_stability']) -
+        winsorize_zscore(df['sga_efficiency_delta'])
     )
 
     # 2. Capital Efficiency (30%)
     df['score_efficiency'] = (
-        (df['roiic'] - df['roiic'].mean()) / (df['roiic'].std() + 1e-6) +
-        (df['three_gp_score'] - df['three_gp_score'].mean()) / (df['three_gp_score'].std() + 1e-6)
+        winsorize_zscore(df['roiic']) +
+        winsorize_zscore(df['three_gp_score'])
     )
 
     # 3. Downside & Forensic Risk (15%)
-    # Lower is better for accruals
+    # Higher is better for altman/runway, lower is better for accruals/dilution
     df['score_risk'] = (
-        (df['altman_z_score'] - df['altman_z_score'].mean()) / (df['altman_z_score'].std() + 1e-6) +
-        (df['cash_runway_months'] - df['cash_runway_months'].mean()) / (df['cash_runway_months'].std() + 1e-6) -
-        (df['accruals_ratio'] - df['accruals_ratio'].mean()) / (df['accruals_ratio'].std() + 1e-6)
+        winsorize_zscore(df['altman_z_score']) +
+        winsorize_zscore(df['cash_runway_months']) -
+        winsorize_zscore(df['accruals_ratio']) -
+        winsorize_zscore(df['shares_outstanding_cagr'])  # Penalize dilution, reward buybacks
     )
 
     # 4. Growth-Adjusted Valuation (20%) & 5. Market Runway (10%)
@@ -96,8 +113,8 @@ def process_tier_list(gemini_client: Optional[GeminiClient] = None):
     df['market_cap'] = pd.to_numeric(df['market_cap'], errors='coerce').fillna(1e12)
     df['log_mcap'] = np.log(df['market_cap'])
     df['score_growth_val'] = (
-        (df['organic_revenue_growth'] - df['organic_revenue_growth'].mean()) / (df['organic_revenue_growth'].std() + 1e-6) -
-        (df['log_mcap'] - df['log_mcap'].mean()) / (df['log_mcap'].std() + 1e-6)
+        winsorize_zscore(df['organic_revenue_growth']) -
+        winsorize_zscore(df['log_mcap'])
     )
 
     # --- Weighted Composite Score ---
@@ -108,13 +125,28 @@ def process_tier_list(gemini_client: Optional[GeminiClient] = None):
         0.30 * df['score_growth_val']  # Combining last two for simplicity in proxy logic
     )
 
+    # --- Distress Circuit-Breaker ---
+    # Companies in Altman Z-Score distress zone (<1.8) are hard-capped below S-Tier.
+    # Even with winsorized z-scores, a near-bankrupt company should never reach S-tier
+    # just because one ratio (e.g., ROIIC from a diff/diff artifact) is extreme.
+    mean_cs = df['composite_score'].mean()
+    std_cs = df['composite_score'].std()
+    s_tier_threshold = mean_cs + 1.2 * std_cs  # S-tier entry point
+    a_tier_cap = mean_cs + 0.5 * std_cs         # Cap distressed at top of A-tier
+    
+    distress_mask = df['altman_z_score'] < 1.8
+    distressed_count = distress_mask.sum()
+    if distressed_count > 0:
+        df.loc[distress_mask, 'composite_score'] = df.loc[distress_mask, 'composite_score'].clip(upper=a_tier_cap)
+        logger.info(f"Distress circuit-breaker applied to {distressed_count} companies (Altman Z < 1.8, capped below S-Tier)")
+
     # Sort candidates
     df = df.sort_values(by='composite_score', ascending=False)
     
     # Prepare Cohort Summary for LLM
     logger.info("Preparing Mathematical Cohort Summary for Stage 2 Synthesis...")
     
-    readable_cols = ['name', 'ticker', 'composite_score', 'score_moat', 'score_efficiency', 'score_risk', 'score_growth_val', 'roiic', 'three_gp_score', 'altman_z_score', 'revenue_growth', 'cash_runway_months']
+    readable_cols = ['name', 'ticker', 'composite_score', 'score_moat', 'score_efficiency', 'score_risk', 'score_growth_val', 'roiic', 'three_gp_score', 'altman_z_score', 'revenue_growth', 'cash_runway_months', 'shares_outstanding_cagr']
     df_summary = df[readable_cols].copy()
     
     # Map raw scores to intuitive tiers for the LLM

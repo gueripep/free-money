@@ -77,7 +77,7 @@ def get_exponential_returns_prompt(stock: dict, doc_names: list, custom_question
     custom_directive = f"\n\nUSER'S CUSTOM INVESTIGATION DIRECTIVE:\n{custom_question}\nYou MUST explicitly investigate these specific questions. Weave your findings and answers naturally into the relevant sections of your analysis (e.g., The Story, The Gate, Red Flags). Do not create a separate section for it.\n" if custom_question else ""
     
     return f"""
-Act as a senior forensic equity analyst and disciplined contrarian investor.
+Act as a senior forensic equity analyst and disciplined investor.
 You are efficiently synthesizing the "Architecture of Exponential Returns" framework (Lynch, O'Neil, Phelps, Cassel).
 
 TARGET: {stock['name']} ({stock.get('ticker', stock['isin'])})
@@ -126,11 +126,11 @@ The quantitative metrics provided above from 'Yahoo Finance/API' are real-time o
 {custom_directive}
 
 OBJECTIVE:
-Conduct a brutal, evidence-based deep dive using the provided Annual Report PDF to determine if this stock has the physics to be a 10-Bagger.
+Conduct an evidence-based deep dive using the provided Annual Report PDF to determine if this stock has the physics to be a 10-Bagger.
 CRITICAL DIRECTIVE: First, synthesize a "Global Thought". Understand the absolute reality of this business ecosystem, secular trends, and broader market positioning BEFORE looking for the "Rocket Fuel". You must act as a disciplined, objective analyst. Identify the primary structural barriers or risks, but weigh them fairly against the quantitative metrics and the deep dive evidence. Do not auto-penalize a stock if the evidence is strong.
 If the company is flagged as a 'HEAVY ACQUIRER', aggressively search the PDF for signs of 'diworsification', poor acquisition integration, ballooning goodwill, and stagnant organic growth.
 SECTION 1: THE FORENSIC LAUNCHPAD (Financial Health)
-- **Capital Intensity & Scalability**: Is this business mathematically capable of exponential growth without exponential capital requirements? Evaluate if revenue growth requires massive, linear capital deployment (e.g., buying physical buildings, heavy manufacturing) versus scalable operating leverage. **CRITICAL:** If the business model is inherently capital intensive with low asset turnover (e.g., Banks, REITs), it CANNOT be a 10-bagger candidate.
+- **Capital Intensity & Scalability**: Is this business mathematically capable of exponential growth without exponential capital requirements? Evaluate if revenue growth requires massive, linear capital deployment (e.g., buying physical buildings, heavy manufacturing) versus scalable operating leverage. **CRITICAL:** High capital intensity is a hurdle for 10-bagger status, but evaluate if the ROIIC (Return on Incremental Invested Capital) justifies the deployment.
 - **Operating Leverage**: Analyze the cost structure.
 - **Self-Funding**: Does Operating Cash Flow cover CapEx?
 - **Return on Capital**: Is there evidence of high/rising ROIC?

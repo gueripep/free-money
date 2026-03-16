@@ -126,8 +126,8 @@ class FinalAnalysisOutputSchema(BaseModel):
     
     scoring_rationale: str = Field(
         description=(
-            "MANDATORY: Before computing any scores, enumerate every flaw, risk, "
-            "and weakness found in the evidence. Then enumerate every strength. "
+            "MANDATORY: Provide a balanced synthesis of the evidence-based strengths and material risks. "
+            "Evaluate the company's prospects objectively, weighing the 'Rocket Fuel' against the 'Structural Barriers'."
             "This reasoning MUST be written BEFORE the scores are determined."
         )
     )
@@ -138,9 +138,9 @@ class FinalAnalysisOutputSchema(BaseModel):
             "Revenue Growth Quality (1-5). "
             "1: Revenue declining or flat with no credible growth catalyst. "
             "2: Low single-digit growth, heavily dependent on one-time or inorganic drivers. "
-            "3: Moderate organic growth (5-15%) but limited evidence of durability or TAM expansion. "
-            "4: Strong, durable organic growth (15%+) with clear catalysts and reasonable visibility. "
-            "5: Exceptional, multi-year organic growth (25%+) with widening TAM and structural tailwinds."
+            "3: Moderate organic growth (5-10%) but limited evidence of durability or TAM expansion. "
+            "4: Strong, durable organic growth (10-20%) with clear catalysts and reasonable visibility. "
+            "5: Exceptional, multi-year organic growth (20%+) with widening TAM and structural tailwinds."
         )
     )
     score_moat_durability: int = Field(
@@ -158,9 +158,9 @@ class FinalAnalysisOutputSchema(BaseModel):
             "Capital Efficiency (1-5). "
             "1: Value destructive; ROIC < WACC and consistently burning cash. "
             "2: Marginal; ROIC roughly equals WACC, requires heavy CapEx to sustain growth. "
-            "3: Solid; Self-funding operations with ROIC > 15%. "
-            "4: High; Asset-light scalability with ROIC > 25% and strong FCF generation. "
-            "5: Elite; Infinite-buffer scalability with ROIC > 50% and exceptional unit economics."
+            "3: Solid; Self-funding operations with ROIC > 10%. "
+            "4: High; Asset-light scalability with ROIC > 20% and strong FCF generation. "
+            "5: Elite; Infinite-buffer scalability with ROIC > 30% and exceptional unit economics."
         )
     )
     score_management_quality: int = Field(
@@ -179,8 +179,8 @@ class FinalAnalysisOutputSchema(BaseModel):
             "1: Catastrophic Risk; terminal debt, regulatory investigation, or failing business model. "
             "2: High Risk; high leverage, intense competition, or aggressive accounting markers. "
             "3: Moderate Risk; standard cyclical or operational risks, manageable debt levels. "
-            "4: Low Risk; clean balance sheet, diverse customer base, and clear regulatory path. "
-            "5: Antifragile; net cash position, essential service status, and robust margins."
+            "4: Low Risk; clean balance sheet (or net cash), diverse customer base, and clear regulatory path. "
+            "5: Antifragile; significant net cash position, essential service status, and robust margins."
         )
     )
     conviction_score: float = Field(description="Weighted average of the five dimension scores (1-5). Weights: Revenue Growth Quality 25%, Moat Durability 25%, Capital Efficiency 20%, Management Quality 15%, Risk Profile 15%. MUST be computed, not intuited.")
