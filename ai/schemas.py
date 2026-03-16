@@ -72,6 +72,8 @@ class BlindQualitativeExtractionSchema(BaseModel):
     distribution_supply: str = Field(description="Supply chain complexity. NO LOCATIONS.")
     competitive_positioning: str = Field(description="Competitive landscape and perceived differentiation. NO MARKET SHARE %.")
     management_outlook: str = Field(description="Forward-looking strategic initiatives. NO DATES OR TARGETS.")
+    extraction_confidence: str = Field(description="Confidence level in the extraction quality (e.g., 'High', 'Medium', 'Low'). Set to 'Low' if management relies on boilerplate jargon.")
+    extraction_confidence_rationale: str = Field(description="Explanation for the confidence rating, specifically identifying if the report is too vague or corporate-standard.")
 
 class PorterFiveForces(BaseModel):
     new_entrants: str
@@ -104,6 +106,9 @@ class BlindQualitativeEvaluationSchema(BaseModel):
     tactical_conflicts: str = Field(description="Internal contradictions or tensions in the model.")
     competitive_moat_sustainability: str = Field(description="Detailed analysis of why the moat will or will not last 10 years.")
     talent_and_culture_risk: str = Field(description="Analysis of 'Brain Drain' or human capital dependency.")
+    micro_cap_risks: str = Field(description="Evaluation of risks specific to micro/small-cap companies: management depth, key-person risk, customer concentration, and operational fragility.")
+    extraction_confidence: str = Field(description="Passed through from Phase 1 extraction.")
+    extraction_confidence_rationale: str = Field(description="Passed through from Phase 1 extraction.")
     structural_tier: int = Field(description="1 (Exceptional), 2 (Defensible but Capital Intensive), 3 (Commoditized/Fragile).")
     final_verdict: str = Field(description="Crisp final decision on structural quality.")
 

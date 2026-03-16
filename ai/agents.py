@@ -176,9 +176,9 @@ class SynthesisAgent:
         
         2. **Forensic Launchpad** ('forensic_launchpad'): Summarize the revenue and margin trends from the Table Agent data. Use prose, not raw JSON. Highlight inflection points and red-flag trends.
         
-        3. **Competitive Moat** ('competitive_moat'): Write a BALANCED discussion. Present the moat evidence from the Narrative Agent AND the moat fragility evidence side by side. Integrate the AI's moat assessment without referencing the agent or evaluation by name.
+        3. **Competitive Moat & Structural Risks** ('competitive_moat'): Write a BALANCED discussion. Present the moat evidence from the Narrative Agent AND the moat fragility evidence side by side. Integrate the AI's moat assessment (including micro-cap specific risks like customer concentration or management depth) without referencing the agent or evaluation by name.
         
-        4. **Growth Catalysts & Risks** ('growth_catalysts_and_risks'): Present the growth catalysts AND the growth quality concerns from the Narrative Agent. Is the growth durable or artificially inflated?
+        4. **Growth Catalysts & Risks** ('growth_catalysts_and_risks'): Present the growth catalysts AND the growth quality concerns from the Narrative Agent. Is the growth durable or artificially inflated? If the Blind Extraction confidence was 'Low' (indicating reliance on boilerplate), explicitly note that management guidance relies on corporate jargon and remains unverified.
         
         5. **Management Quality** ('management_quality'): Present the intelligent fanatic markers AND the management risk flags. Include compensation, insider ownership, and tone analysis.
         
